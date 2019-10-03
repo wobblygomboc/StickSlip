@@ -132,7 +132,6 @@ namespace Global_Physical_Variables
   // hierher kill
   // /// Test for assigning C directly
   // double Imposed_amplitude = 0.0;
-
   // Bit of a hack but it facilitates reuse...
 #include "unstructured_stick_slip_mesh.h"
 
@@ -147,6 +146,48 @@ namespace Global_Physical_Variables
   int sgn(T val)
   {
     return (T(0) < val) - (val < T(0));
+  }
+
+  /// \short Function to convert 2D Polar derivatives (du/dr, du/dtheta, dv/dr, dv/dtheta)
+  // to Cartesian derivatives (dux/dx, dux/dy, duy/dx, duy/dy)
+  DenseMatrix<double> polar_to_cartesian_derivatives_2d(DenseMatrix<double> grad_u_polar,
+							Vector<double> u_polar,
+							double r, double theta)
+  {
+    // shorthand for polar components
+    double u = u_polar[0];
+    double v = u_polar[1];
+
+    double du_dr     = grad_u_polar(0,0);
+    double du_dtheta = grad_u_polar(0,1);
+    double dv_dr     = grad_u_polar(1,0);
+    double dv_dtheta = grad_u_polar(1,1);
+      
+    
+    // output cartesian tensor du_i/dx_j
+    DenseMatrix<double> du_dx(2, 2, 0.0);
+
+    // dux_dx
+    du_dx(0,0) = cos(theta) * (du_dr*cos(theta) - dv_dr*sin(theta))
+      -(1.0/r)*sin(theta) * (du_dtheta*cos(theta) - u*sin(theta) -
+    			     dv_dtheta*sin(theta) - v*cos(theta));
+  
+    // dux_dy
+    du_dx(0,1) = sin(theta) * (du_dr*cos(theta) - dv_dr*sin(theta))
+      +(1.0/r)*cos(theta) * (du_dtheta*cos(theta) - u*sin(theta) -
+    			     dv_dtheta*sin(theta) - v*cos(theta));
+
+    // duy_dx
+    du_dx(1,0) = cos(theta) * (du_dr*sin(theta) + dv_dr*cos(theta))
+      -(1.0/r)*sin(theta) * (du_dtheta*sin(theta) + u*cos(theta) +
+    			     dv_dtheta*cos(theta) - v*sin(theta));
+
+    // duy_dy
+    du_dx(1,1) = sin(theta) * (du_dr*sin(theta) + dv_dr*cos(theta))
+      +(1.0/r)*cos(theta) * (du_dtheta*sin(theta) + u*cos(theta) +
+    			     dv_dtheta*cos(theta) - v*sin(theta));
+
+    return du_dx;
   }
   
   /// \short Newtonian stress tensor
@@ -180,36 +221,21 @@ namespace Global_Physical_Variables
     const double infinity = 10.0 / sqrt(2.0 * Uniform_element_area);
 
     // Radius & polar angle, accounting for the fact the singularity is not at the
-    // origin but at (L_up, 0)
-    double r = sqrt( (x[0]-L_up) * (x[0]-L_up) + x[1]*x[1] );
+    // origin but at (0, domain_height)
+    double r = sqrt( x[0]*x[0] + (x[1]-domain_height)*(x[1]-domain_height) );
 
     bool at_origin = (r == 0);
-
-    // QUEHACERES delete
-    // // catch the singularity point
-    // if (at_origin)
-    // {
-    //   // shift the radius to 1/10th of the element lengthscale
-    //   r = 0.1*sqrt(2.0 * Uniform_element_area);      
-    // }   
-    
-    // make sure we've got enough storage
-    u.resize(3);
-            
+        
     // Little hack to make sure atan2 doesn't overshoot
     double y = x[1];
     double tol_y = -1.0e-12;
     if ((y<0.0) && (y>tol_y)) y = 0.0;
 
-    // angle w.r.t. x-axis from the singularity at the corner, coords (L_up, 0)
-    double theta = atan2(y, (x[0]-L_up));
+    // angle w.r.t. singular point
+    double theta = atan2(y-domain_height, x[0]);
 
-    // angle w.r.t. to axis of symmetry between the two walls of the step,
-    // the angle the analytic solution is given in terms of
-    double phi = theta + alpha - MathematicalConstants::Pi;
-    
     // streamfunction exponent, from Mathematica
-    double lambda = 1.544483736782746;
+    double lambda = 0.5;
 
     // polar components in r and phi directions
     double ur = 0, v = 0;
@@ -217,38 +243,35 @@ namespace Global_Physical_Variables
     // ------------------------------------------------------------------
     // components in polar coordinates
     // ------------------------------------------------------------------
-    ur = pow(r, lambda-1.0)*((lambda-2.0)*cos(alpha*lambda)*sin((lambda-2.0)*phi)
-			     -lambda*cos(alpha*(lambda-2.0))*sin(lambda*phi));
+    ur = -2.0*pow(r, lambda)*(lambda*cos(lambda*theta)*sin(theta) +
+			      cos(theta)*sin(lambda*theta) );
   
-    v  = pow(r,lambda-1.0)*(-lambda*cos(alpha*(lambda-2.0))*cos(lambda*phi) +
-			    lambda*cos((lambda-2.0)*phi)*cos(alpha*lambda) );
+    v  = 2.0*pow(r,lambda)*(lambda+1)*sin(theta)*sin(lambda*theta);
 
     // ------------------------------------------------------------------
     // derivatives of polar components w.r.t. polar components
     // ------------------------------------------------------------------
-    double dudr =  pow(r,-2 + lambda)*(-1 + lambda) *
-      ((-2 + lambda)*cos(alpha*lambda)*sin(phi*(-2 + lambda)) - 
-       lambda*cos(alpha*(-2 + lambda))*sin(phi*lambda));
+    double dudr   = -2*pow(r, lambda-1)*lambda*(lambda*cos(theta*lambda)*sin(theta) +
+						cos(theta)*sin(theta*lambda) );
 
-    double dudphi = pow(r,-1 + lambda) *
-      (-(pow(lambda,2) * cos(alpha*(-2 + lambda))*cos(phi*lambda)) + 
-       pow(-2 + lambda,2)*cos(phi*(-2 + lambda))*cos(alpha*lambda));
+    double dudphi = 2*pow(r, lambda)*(-2*lambda*cos(theta)*cos(theta*lambda) +
+				      (1 + pow(lambda,2))*sin(theta)*sin(theta*lambda));
 
-    double dvdr = pow(r,-2 + lambda) *
-      (-1 + lambda)*(-(lambda*cos(alpha*(-2 + lambda))*cos(phi*lambda)) + 
-		     lambda*cos(phi*(-2 + lambda))*cos(alpha*lambda));
+    double dvdr   = 2*pow(r, lambda-1)*lambda*(1 + lambda)*sin(theta)*sin(theta*lambda);
 
-    double dvdphi = pow(r,-1 + lambda)*lambda *
-      (-((-2 + lambda)*cos(alpha*lambda)*sin(phi*(-2 + lambda))) + 
-       lambda*cos(alpha*(-2 + lambda))*sin(phi*lambda));
+    double dvdphi = 2*pow(r,lambda)*(1 + lambda)*(lambda*cos(theta*lambda)*sin(theta) +
+						  cos(theta)*sin(theta*lambda));
+
+    // make sure we've got enough storage
+    u.resize(3);
     
     // Cartesian components (in polar coords, i.e. ux(r,theta) and uy(r,theta) )
-    // note we're now using the angle w.r.t. the x-axis
+    // note we're now using the angle w.r.t. the x-axis		     
     u[0] = ur * cos(theta) - v * sin(theta);
     u[1] = ur * sin(theta) + v * cos(theta);
 
     // singular pressure \hat p
-    u[2] = 4.0*pow(r,lambda-2.0)*(lambda-1.0)*cos(alpha*lambda)*sin((lambda-2.0)*phi);
+    u[2] = 4*pow(r,lambda-1)*lambda*sin(theta*(lambda-1));
     
     // ------------------------------------------------------------------
     // derivatives of Cartesian components w.r.t. Cartesian coordinates
@@ -256,50 +279,19 @@ namespace Global_Physical_Variables
 
     // make sure we've got a 2x2
     du_dx.resize(2);
-        
-    // QUEHACERES not sure these are right, probably delete
-    // // S is tensor \bm{\grad u} in polar coordinates
-    // DenseMatrix<double> S(2,2);
-    // S(0,0) = dudr;               // (\bm{\grad u})_{rr}
-    // S(0,1) = (1.0/r)*dudphi;     // (\bm{\grad u})_{r\theta}
-    // S(1,0) = dvdr;               // (\bm{\grad u})_{\theta r}
-    // S(1,1) = (1.0/r)*dvdphi;     // (\bm{\grad u})_{\theta\theta}
 
-    // // dux_dx
-    // du_dx(0,0) = cos(theta) * ( S(0,0)*cos(theta) - S(0,1)*sin(theta) ) -
-    //   sin(theta) * ( S(1,0)*cos(theta) - S(1,1)*sin(theta) );
+    DenseMatrix<double> grad_u_polar(2);
+    grad_u_polar(0,0) = dudr;
+    grad_u_polar(0,1) = dudphi;
+    grad_u_polar(1,0) = dvdr;
+    grad_u_polar(1,1) = dvdphi;
 
-    // // dux_dy
-    // du_dx(0,1) = cos(theta) * ( S(0,0)*sin(theta) + S(0,1)*cos(theta) ) -
-    //   sin(theta) * ( S(1,0)*sin(theta) + S(1,1)*cos(theta) );
+    Vector<double>u_polar(2);
+    u_polar[0] = ur;
+    u_polar[1] = v;
 
-    // // duy_dx
-    // du_dx(1,0) = sin(theta) * ( S(0,0)*cos(theta) - S(0,1)*sin(theta) ) +
-    //   cos(theta) * ( S(1,0)*cos(theta) - S(1,1)*sin(theta) );
-
-    // // duy_dy
-    // du_dx(1,1) = sin(theta) * ( S(0,0)*sin(theta) + S(0,1)*cos(theta) ) +
-    //   cos(theta) * ( S(1,0)*sin(theta) + S(1,1)*cos(theta) );
-    
-    // dux_dx
-    du_dx(0,0) = cos(theta) * (dudr*cos(theta) - dvdr*sin(theta))
-      -(1.0/r)*sin(theta) * (dudphi*cos(theta) - ur*sin(theta) -
-    			     dvdphi*sin(theta) - v*cos(theta));
-  
-    // dux_dy
-    du_dx(0,1) = sin(theta) * (dudr*cos(theta) - dvdr*sin(theta))
-      +(1.0/r)*cos(theta) * (dudphi*cos(theta) - ur*sin(theta) -
-    			     dvdphi*sin(theta) - v*cos(theta));
-
-    // duy_dx
-    du_dx(1,0) = cos(theta) * (dudr*sin(theta) + dvdr*cos(theta))
-      -(1.0/r)*sin(theta) * (dudphi*sin(theta) + ur*cos(theta) +
-    			     dvdphi*cos(theta) - v*sin(theta));
-
-    // duy_dy
-    du_dx(1,1) = sin(theta) * (dudr*sin(theta) + dvdr*cos(theta))
-      +(1.0/r)*cos(theta) * (dudphi*sin(theta) + ur*cos(theta) +
-    			     dvdphi*cos(theta) - v*sin(theta));
+    // do the conversion to Cartesian tensor
+    du_dx = polar_to_cartesian_derivatives_2d(grad_u_polar, u_polar, r, theta);
     
     // catch the point exactly at the origin
     if(at_origin)
@@ -307,7 +299,7 @@ namespace Global_Physical_Variables
       // from BCs
       u[0] = 0.0;
       u[1] = 0.0; 
-      u[2] = sgn(sin((2.0 - lambda)*phi)) * infinity;
+      u[2] = infinity;
 
       du_dx(0,0) =  infinity;
       du_dx(0,1) =  infinity;
@@ -389,65 +381,55 @@ namespace Global_Physical_Variables
     u_and_gradient_non_singular(x, u, dudx);
   }
 
-  void prescribed_traction(const Vector<double>& x, Vector<double>& traction)
-  {
-    double tol=1.0e-6;
-    Vector<double> normal(2);
-
-    // rightmost boundary
-    if(fabs(x[0]-2.0-2.0*Scaling_factor_for_domain) < Scaling_factor_for_domain*tol)
-    {
-      normal[0] = 1.0;
-      normal[1] = 0.0;
-    }
-
-    // Vertical boundary below the step
-    if(fabs(x[0]-2.0)<Scaling_factor_for_domain*tol)
-    {
-      normal[0] = -1.0;
-      normal[1] =  0.0;
-    }
-
-
-    // 
-    if(fabs(x[0]-2.0*(1.0-Scaling_factor_for_domain)) < Scaling_factor_for_domain*tol)
-    {
-      normal[0] = -1.0;
-      normal[1] =  0.0;
-    }
-
-    if(fabs(x[1]-1.0*Scaling_factor_for_domain) < Scaling_factor_for_domain*tol)
-    {
-      normal[0] = 0.0;
-      normal[1] = 1.0;
-    }
-
-    if(fabs(x[1]) < Scaling_factor_for_domain*tol)
-    {
-      normal[0] =  0.0;
-      normal[1] = -1.0;
-    }
-
-    if(fabs(x[1]+1.0*Scaling_factor_for_domain) < Scaling_factor_for_domain*tol)
-    {
-      normal[0] =  0.0;
-      normal[1] = -1.0;
-    }
-
+  void prescribed_traction(const Vector<double>& x,
+			   const Vector<double>& outer_unit_normal,
+			   Vector<double>& traction)
+  {        
+    // matrix to store the stress BCs we're applying 
+    DenseMatrix<double> stress(2, 2, 0.0);
+      
     // make sure we've got enough storage
     traction.resize(Dim);
     
-    // enforce parallel outflow with parabolic profile
-    traction[0] = 0;
-    traction[1] = x[1] * normal[0];
-    
-    // regular and singular parts of the solution        
-    Vector<double> u_reg;
-    u_non_singular(x, u_reg);
-    
-    Vector<double> u_sing = singular_fct(x);
+    // ======================================
+        
+    // inflow boundary
+    if(outer_unit_normal[0] == -1)
+    {
+      // gradient of the parabolic inflow velocity profile
+      double df_dy = domain_height - 2.0*x[1];
+      
+      stress(0,1) = df_dy;
+      stress(1,0) = df_dy;
 
-    // QUEHACERES come back to the reg/sing shizzle above
+      // pressure
+      stress(0,0) = -100;
+      stress(1,1) = -100;
+    }
+
+    // top boundary
+    if(outer_unit_normal[1] == 1)
+    {
+      // T_{xy} = 0
+      stress(0,1) = 0.0;
+      stress(1,0) = 0.0;
+    }
+
+    // right boundary
+    if(outer_unit_normal[0] == 1)
+    {
+      
+    }
+
+    // bottom boundary
+    if(outer_unit_normal[1] == -1)
+    {
+      
+    }
+
+    // set the prescribed traction t_i = T_{ij} n_j
+    traction[0] = stress(0,0) * outer_unit_normal[0] + stress(0,1) * outer_unit_normal[1];
+    traction[1] = stress(1,0) * outer_unit_normal[0] + stress(1,1) * outer_unit_normal[1];
   }
 
   /// Function to specify boundary conditions
@@ -456,13 +438,28 @@ namespace Global_Physical_Variables
     // no-slip as default
     Vector<double> u(Dim, 0.0);
 
+    // get value of the singular function at this point
+    Vector<double> u_sing = singular_fct(x);
+    
     // check if this is the inflow boundary - this is the only boundary with
     // inhomogeneous Dirichlet conditions
     if(boundary_id == Inflow_boundary_id)      
     {
       // apply parabolic velocity profile to the x-component,
-	// i.e. standard flow profile in a pipe
-	u[0] = x[1]*(domain_height - x[1]);	
+      // i.e. standard flow profile in a pipe
+      u[0] = x[1]*(domain_height - x[1]);
+
+      if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") )
+      {
+	u[0] -= u_sing[0];
+      }
+    }
+    else if(boundary_id == Bottom_boundary_id)
+    {
+      if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") )
+      {
+	u[1] = -u_sing[1];
+      }
     }
     
     return u;
@@ -622,97 +619,96 @@ private:
 
   /// Create face elements
   void create_face_elements()
-  {   
-    // Flux boundary conditions?
-    if (Global_Physical_Variables::Do_traction_problem)
+  { 
+    // Traction boundaries, which is all except the no-slip wall
+    unsigned num_bound = Bulk_mesh_pt->nboundary();
+    for(unsigned i_bound = 0; i_bound<num_bound; i_bound++)
     {
-      // Traction boundaries, which is all except the no-slip wall
-      unsigned num_bound = Bulk_mesh_pt->nboundary();
-      for(unsigned i_bound = 0; i_bound<num_bound; i_bound++)
+      // the only boundary with no traction conditions is the no-slip wall
+      if(i_bound == Global_Physical_Variables::No_slip_boundary_id)
       {
-	// the only boundary with no traction conditions is the no-slip wall
-	if(i_bound == Global_Physical_Variables::No_slip_boundary_id)
+	continue;
+      }
+	
+      unsigned n_element = Bulk_mesh_pt->nboundary_element(i_bound);
+      for(unsigned e=0; e<n_element; e++)
+      {
+	//Create Pointer to bulk element adjacent to the boundary
+	ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>
+	  (Bulk_mesh_pt->boundary_element_pt(i_bound, e));
+         
+	//Get Face index of boundary in the bulk element
+	int face_index = Bulk_mesh_pt->face_index_at_boundary(i_bound,e);
+         
+	//Create corresponding face element
+	NavierStokesWithSingularityTractionElement<ELEMENT>* traction_element_pt =
+	  new NavierStokesWithSingularityTractionElement<ELEMENT>(
+	    bulk_elem_pt, face_index);
+         
+	// Set the pointer to the prescribed traction function
+	traction_element_pt->traction_fct_pt() = 
+	  &Global_Physical_Variables::prescribed_traction;
+         
+	if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+	{
+	  // We pass the pointer of singular function element to the 
+	  // face element (Set function because it also declares 
+	  // the amplitude to be external data for that element).
+	  traction_element_pt->set_navier_stokes_sing_el_pt(
+	    dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>(
+	      Singular_fct_element_mesh_pt->element_pt(0)));
+	}
+	    
+	//Attach it to the mesh
+	Traction_boundary_condition_mesh_pt->add_element_pt(traction_element_pt);
+      }
+    }
+        
+    // Dirichlet boundary conditions
+    if (CommandLineArgs::command_line_flag_has_been_set
+	("--enforce_dirichlet_bcs_by_lagrange_multipliers"))
+    {
+      // loop over all the outer boundaries
+      for(unsigned i_bound=0;
+	  i_bound<=Global_Physical_Variables::Bottom_boundary_id; i_bound++)
+      {
+	// Some Dirichlet conditions applied on all boundaries except the outflow
+	if(i_bound == Global_Physical_Variables::Outflow_boundary_id)
 	{
 	  continue;
 	}
 	
 	unsigned n_element = Bulk_mesh_pt->nboundary_element(i_bound);
+          
+	// Loop over the bulk elements adjacent to boundary b
 	for(unsigned e=0; e<n_element; e++)
 	{
-	  //Create Pointer to bulk element adjacent to the boundary
-	  ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>
-	    (Bulk_mesh_pt->boundary_element_pt(i_bound, e));
-         
-	  //Get Face index of boundary in the bulk element
-	  int face_index = Bulk_mesh_pt->face_index_at_boundary(i_bound,e);
-         
-	  //Create corresponding face element
-	  NavierStokesWithSingularityTractionElement<ELEMENT>* traction_element_pt =
-	    new NavierStokesWithSingularityTractionElement<ELEMENT>(
-	      bulk_elem_pt, face_index);
-         
-	  // Set the pointer to the prescribed traction function
-	  traction_element_pt->traction_fct_pt() = 
-	    &Global_Physical_Variables::prescribed_traction;
-         
-	  if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+	  // Get pointer to the bulk element that is adjacent to boundary b
+	  ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
+	    Bulk_mesh_pt->boundary_element_pt(i_bound, e));
+	      
+	  //Find the index of the face of element e along boundary b 
+	  int face_index = Bulk_mesh_pt->face_index_at_boundary(i_bound, e);
+            
+	  // Build the corresponding bc element
+	  NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
+	    new NavierStokesWithSingularityBCFaceElement<ELEMENT>
+	    (bulk_elem_pt, face_index, BC_el_id);
+            
+	  // Tell the element about the singular fct
+	  if (!CommandLineArgs::command_line_flag_has_been_set
+	      ("--dont_subtract_singularity"))
 	  {
-	    // We pass the pointer of singular function element to the 
-	    // face element (Set function because it also declares 
-	    // the amplitude to be external data for that element).
-	    traction_element_pt->set_navier_stokes_sing_el_pt(
+	    bc_element_pt->set_navier_stokes_sing_el_pt(
 	      dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>(
 		Singular_fct_element_mesh_pt->element_pt(0)));
 	  }
-	    
-	  //Attach it to the mesh
-	  Traction_boundary_condition_mesh_pt->add_element_pt(traction_element_pt);
+            
+	  //Add the bc element to the surface mesh
+	  Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
 	}
       }
     }
-    // QUEHACERES delete for stick-slip
-    // // Dirichlet boundary conditions
-    // else
-    // {
-    //   if (CommandLineArgs::command_line_flag_has_been_set
-    // 	  ("--enforce_dirichlet_bcs_by_lagrange_multipliers"))
-    //   {
-    // 	// BC elements live on the whole outer boundary
-    // 	for(unsigned i_bound=0;
-    // 	    i_bound<Global_Physical_Variables::Bottom_boundary; i_bound++)
-    // 	{	    
-    // 	  unsigned n_element = Bulk_mesh_pt->nboundary_element(i_bound);
-          
-    // 	  // Loop over the bulk elements adjacent to boundary b
-    // 	  for(unsigned e=0; e<n_element; e++)
-    // 	  {
-    // 	    // Get pointer to the bulk element that is adjacent to boundary b
-    // 	    ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
-    // 	      Bulk_mesh_pt->boundary_element_pt(i_bound, e));
-	      
-    // 	    //Find the index of the face of element e along boundary b 
-    // 	    int face_index = Bulk_mesh_pt->face_index_at_boundary(i_bound, e);
-            
-    // 	    // Build the corresponding bc element
-    // 	    NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
-    // 	      new NavierStokesWithSingularityBCFaceElement<ELEMENT>
-    // 	      (bulk_elem_pt, face_index, BC_el_id);
-            
-    // 	    // Tell the element about the singular fct
-    // 	    if (!CommandLineArgs::command_line_flag_has_been_set
-    // 		("--dont_subtract_singularity"))
-    // 	    {
-    // 	      bc_element_pt->set_navier_stokes_sing_el_pt(
-    // 		dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>(
-    // 		  Singular_fct_element_mesh_pt->element_pt(0)));
-    // 	    }
-            
-    // 	    //Add the bc element to the surface mesh
-    // 	    Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
-    // 	  }
-    // 	}
-    //   }
-    // }
 
     if (CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
     {
@@ -1011,8 +1007,8 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
   for(unsigned ibound=0; ibound<num_bound; ibound++)
   {
     // boolean vector indicating whether each component of u should be pinned
-    Vector<bool> pin_u(2, 0);
-    
+    Vector<unsigned> pin_u(Dim, 0);
+   
     switch(ibound)
     {
       case Global_Physical_Variables::Inflow_boundary_id:
@@ -1054,7 +1050,7 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
   
   // Now set boundary values
   for (unsigned ibound=0; ibound<num_bound; ibound++)
-  {        
+  {
     // loop over the nodes on this boundary
     unsigned num_nod = Bulk_mesh_pt->nboundary_node(ibound);
     for (unsigned inod=0; inod<num_nod; inod++)
@@ -1109,15 +1105,15 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 	  el_pt->unpin_u_fe_at_specified_local_node(j, i);
 	}
 		
-	Node* nod_pt = el_pt->node_pt(j);
+	Node* node_pt = el_pt->node_pt(j);
 
 	Vector<double> x(2);
-	x[0] = nod_pt->x(0);
-	x[1] = nod_pt->x(1);
+	x[0] = node_pt->x(0);
+	x[1] = node_pt->x(1);
 
 	// find the boundaries this node is on
 	std::set<unsigned>* boundaries_set;
-	el_pt->node_pt(j)->get_boundaries_pt(boundaries_set);
+	node_pt->get_boundaries_pt(boundaries_set);
 
 	// assuming BCs are continuous so doesn't matter if node is on multiple
 	// boundaries, just take the first
@@ -1127,6 +1123,34 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 	// get velocity from boundary conditions at this point
 	Vector<double> u(Dim);
 	u = Global_Physical_Variables::u_BC(x, first_boundary);
+
+	// ============================================================================
+	// pin Lagrange multipliers for Dirichlet conditions that we're *not* imposing
+	// ============================================================================
+	
+	if(node_pt->is_on_boundary(Global_Physical_Variables::Inflow_boundary_id) )
+	{
+	  // no constraint on u_y on the inflow boundary
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	}
+	else if(node_pt->is_on_boundary(Global_Physical_Variables::Top_exit_boundary_id) )
+	{
+	  // no constraint on u_x on the top exit boundary
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
+	}
+	// shouldn't even be in the BC face mesh as there are no Dirichlet conditions here,
+	// but just in case
+	else if(node_pt->is_on_boundary(Global_Physical_Variables::Outflow_boundary_id) )
+	{
+	  // no constraint on u_x or u_y on the outflow boundary
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	}
+	else if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
+	{
+	  // no constraint on u_x on the bottom boundary
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
+	}
 	
 	// assign to the matrix of nodal values
 	for(unsigned i=0; i<Dim; i++)
@@ -1142,7 +1166,7 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 
 } // end set bc
 
-//==start of set_values_to_singular_solution =============================
+//== start of set_values_to_singular_solution ============================
 /// Function to assign the singular solution to all nodes of the mesh
 //========================================================================
 template<class ELEMENT>
@@ -2056,13 +2080,6 @@ int main(int argc, char **argv)
   // Doc what has actually been specified on the command line
   CommandLineArgs::doc_specified_flags();
 
-  // QUEHACERES delete
-  // // hierher tidy
-  // if (CommandLineArgs::command_line_flag_has_been_set("--use_dirichlet_bcs"))
-  // {
-  //   Global_Physical_Variables::Do_traction_problem = false;
-  // }
-
   // if no specific element area specified for the high-res region, just use the uniform area
   if (!CommandLineArgs::command_line_flag_has_been_set("--high_res_element_area"))
   {
@@ -2138,52 +2155,10 @@ int main(int argc, char **argv)
     exit(0);
   }
   
-
-
   // Doing normal run: Just solve the bloody thing
   problem.newton_solve();
   problem.doc_solution();
   problem.doc_info()->number()++;
-  
 
-  // cout << "not done yet\n";
-  // abort();
-
-  
-
-  //##################
-
-
-
-  // bool doc_resid=false;
-
-  // Global_Physical_Variables::shrink_the_mesh=false;
-  // Global_Physical_Variables::scale=0.5;
-
-  // // Solve, refine uniformly and keep going
-  //  for (unsigned i=0;i<max_adapt;i++)
-  //   {
-
-  //    if (doc_resid)
-  //     {
-  //      if(i==max_adapt-1)
-  //      {
-  //       problem.impose_amplitude_runs();
-  //       problem.check_residual_for_exact_non_singular_fe_soln();        
-  //      }
-
-  //     }
-  //    else
-  //     {
-  //      // Solve the bloody thing
-  //      problem.newton_solve();
-  //      problem.doc_solution();
-  //      problem.doc_info()->number()++;
-  //     }
-
-
-  //    if (i!=(max_adapt-1)) problem.refine_uniformly();
-  //   }
-
-
+  return 0;
 }
