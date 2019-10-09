@@ -51,6 +51,57 @@
 using namespace std;
 using namespace oomph;
 
+namespace Additional_Maths_Functions
+{
+  double atan2pi(const double y, const double x)
+  {
+    // Polar angle
+    double theta = atan2(y,x);
+
+    // prevent atan2 negative angle fuckery that causes a discontinuity at theta=pi
+    // if our function isn't 2pi periodic
+    if (y < 0.0)
+    {
+      theta += 2.0 * MathematicalConstants::Pi;
+    }
+
+    return theta;
+  }
+
+  // Kronecker delta function
+  int delta(unsigned i, unsigned j)
+  {
+    return (i == j);
+  }
+
+  // sign function
+  template <typename T>
+  int sgn(T val)
+  {
+    return (T(0) < val) - (val < T(0));
+  }
+
+  // flip an angle \theta\in[0,2\pi] w.r.t. the y-axis
+  double flip_angle_wrt_y_axis(double theta)
+  {
+    double theta_flipped;
+
+    // shorthand
+    double pi = MathematicalConstants::Pi;
+    
+    if(theta <= pi)
+    {
+      theta_flipped = pi - theta;
+    }
+    else
+    {
+      theta_flipped = pi + (2.0*pi - theta);
+    }
+
+    return theta_flipped;
+  }  
+}
+
 //==start_of_namespace==============================
 /// Namespace for physical parameters
 //==================================================
@@ -116,11 +167,11 @@ namespace Global_Physical_Variables
   // IDs for the boundaries
   enum
   {
-    Inflow_boundary_id                   = 0,
-    No_slip_boundary_id                  = 1,
-    Top_exit_boundary_id                 = 2,
-    Outflow_boundary_id                  = 3,
-    Bottom_boundary_id                   = 4,    
+    Inflow_boundary_id    = 0,
+    No_slip_boundary_id   = 1,
+    Top_slip_boundary_id  = 2,
+    Outflow_boundary_id   = 3,
+    Bottom_boundary_id    = 4,    
   };
 
   enum
@@ -135,19 +186,7 @@ namespace Global_Physical_Variables
   // Bit of a hack but it facilitates reuse...
 #include "unstructured_stick_slip_mesh.h"
 
-  // Kronecker delta function
-  int delta(unsigned i, unsigned j)
-  {
-    return (i == j);
-  }
-
-  // sign function
-  template <typename T>
-  int sgn(T val)
-  {
-    return (T(0) < val) - (val < T(0));
-  }
-
+  
   /// \short Function to convert 2D Polar derivatives (du/dr, du/dtheta, dv/dr, dv/dtheta)
   // to Cartesian derivatives (dux/dx, dux/dy, duy/dx, duy/dy)
   DenseMatrix<double> polar_to_cartesian_derivatives_2d(DenseMatrix<double> grad_u_polar,
@@ -202,7 +241,7 @@ namespace Global_Physical_Variables
       for(unsigned j=0; j<2; j++)
       {
 	// Newtonian constitutive relation
-	stress(i,j) = -p*delta(i,j) + 2.0*strain_rate(i,j);
+	stress(i,j) = -p*Additional_Maths_Functions::delta(i,j) + 2.0*strain_rate(i,j);
       }
     }
 
@@ -225,15 +264,18 @@ namespace Global_Physical_Variables
     double r = sqrt( x[0]*x[0] + (x[1]-domain_height)*(x[1]-domain_height) );
 
     bool at_origin = (r == 0);
-        
-    // Little hack to make sure atan2 doesn't overshoot
+    
     double y = x[1];
-    double tol_y = -1.0e-12;
-    if ((y<0.0) && (y>tol_y)) y = 0.0;
+    double tol_y = 1.0e-12;
+    if ((y>0.0) && (y<tol_y)) y = -tol_y;
 
     // angle w.r.t. singular point
-    double theta = atan2(y-domain_height, x[0]);
+    double theta = Additional_Maths_Functions::atan2pi(y - domain_height, x[0]);
 
+    // angle flipped about x=0, because analytic solution is where
+    // plate is along theta=0 not theta=pi 
+    double phi = Additional_Maths_Functions::flip_angle_wrt_y_axis(theta);
+    
     // streamfunction exponent, from Mathematica
     double lambda = 0.5;
 
@@ -243,35 +285,37 @@ namespace Global_Physical_Variables
     // ------------------------------------------------------------------
     // components in polar coordinates
     // ------------------------------------------------------------------
-    ur = -2.0*pow(r, lambda)*(lambda*cos(lambda*theta)*sin(theta) +
-			      cos(theta)*sin(lambda*theta) );
+    ur = -2.0*pow(r, lambda)*(lambda*cos(lambda*phi)*sin(phi) +
+			      cos(phi)*sin(lambda*phi) );
   
-    v  = 2.0*pow(r,lambda)*(lambda+1)*sin(theta)*sin(lambda*theta);
+    v  = 2.0*pow(r,lambda)*(lambda+1)*sin(phi)*sin(lambda*phi);
 
     // ------------------------------------------------------------------
     // derivatives of polar components w.r.t. polar components
     // ------------------------------------------------------------------
-    double dudr   = -2*pow(r, lambda-1)*lambda*(lambda*cos(theta*lambda)*sin(theta) +
-						cos(theta)*sin(theta*lambda) );
+    double dudr   = -2*pow(r, lambda-1)*lambda*(lambda*cos(phi*lambda)*sin(phi) +
+						cos(phi)*sin(phi*lambda) );
 
-    double dudphi = 2*pow(r, lambda)*(-2*lambda*cos(theta)*cos(theta*lambda) +
-				      (1 + pow(lambda,2))*sin(theta)*sin(theta*lambda));
+    double dudphi = 2*pow(r, lambda)*(-2*lambda*cos(phi)*cos(phi*lambda) +
+				      (1 + pow(lambda,2))*sin(phi)*sin(phi*lambda));
 
-    double dvdr   = 2*pow(r, lambda-1)*lambda*(1 + lambda)*sin(theta)*sin(theta*lambda);
+    double dvdr   = 2*pow(r, lambda-1)*lambda*(1 + lambda)*sin(phi)*sin(phi*lambda);
 
-    double dvdphi = 2*pow(r,lambda)*(1 + lambda)*(lambda*cos(theta*lambda)*sin(theta) +
-						  cos(theta)*sin(theta*lambda));
+    double dvdphi = 2*pow(r,lambda)*(1 + lambda)*(lambda*cos(phi*lambda)*sin(phi) +
+						  cos(phi)*sin(phi*lambda));
 
     // make sure we've got enough storage
     u.resize(3);
     
     // Cartesian components (in polar coords, i.e. ux(r,theta) and uy(r,theta) )
-    // note we're now using the angle w.r.t. the x-axis		     
-    u[0] = ur * cos(theta) - v * sin(theta);
-    u[1] = ur * sin(theta) + v * cos(theta);
+    // note we're now using the angle where the no-slip surface is theta=pi
+    // QUEHACERES not right, we have u,v in terms of r and theta measured from the apparent origin
+    // where the analytic solution is correct, can't now move that origin. 
+    u[0] = ur * cos(phi) - v * sin(phi);
+    u[1] = ur * sin(phi) + v * cos(phi);
 
     // singular pressure \hat p
-    u[2] = 4*pow(r,lambda-1)*lambda*sin(theta*(lambda-1));
+    u[2] = 4*pow(r,lambda-1)*lambda*sin(phi*(lambda-1));
     
     // ------------------------------------------------------------------
     // derivatives of Cartesian components w.r.t. Cartesian coordinates
@@ -291,7 +335,14 @@ namespace Global_Physical_Variables
     u_polar[1] = v;
 
     // do the conversion to Cartesian tensor
-    du_dx = polar_to_cartesian_derivatives_2d(grad_u_polar, u_polar, r, theta);
+    du_dx = polar_to_cartesian_derivatives_2d(grad_u_polar, u_polar, r, phi);
+
+    // QUEHACERES account for the flip in the y-axis;
+    // ux, dux_dy and duy_dx need to be flipped, but not dux_dx as the signs cancel.
+    u[0] = -u[0];
+    
+    du_dx(0,1) = -du_dx(0,1);
+    du_dx(1,0) = -du_dx(1,0);
     
     // catch the point exactly at the origin
     if(at_origin)
@@ -384,7 +435,9 @@ namespace Global_Physical_Variables
   void prescribed_traction(const Vector<double>& x,
 			   const Vector<double>& outer_unit_normal,
 			   Vector<double>& traction)
-  {        
+  {
+    double tol = 1e-3;
+    
     // matrix to store the stress BCs we're applying 
     DenseMatrix<double> stress(2, 2, 0.0);
       
@@ -392,23 +445,22 @@ namespace Global_Physical_Variables
     traction.resize(Dim);
     
     // ======================================
-        
+
     // inflow boundary
-    if(outer_unit_normal[0] == -1)
+    if(outer_unit_normal[0] < -1 + tol)
     {
       // gradient of the parabolic inflow velocity profile
-      double df_dy = domain_height - 2.0*x[1];
+      double df_dy = -3.0*x[1];
       
       stress(0,1) = df_dy;
       stress(1,0) = df_dy;
 
       // pressure
-      stress(0,0) = -100;
-      stress(1,1) = -100;
+      stress(0,0) = 0;
     }
 
     // top boundary
-    if(outer_unit_normal[1] == 1)
+    if(outer_unit_normal[1] > 1.0 - tol)
     {
       // T_{xy} = 0
       stress(0,1) = 0.0;
@@ -416,13 +468,13 @@ namespace Global_Physical_Variables
     }
 
     // right boundary
-    if(outer_unit_normal[0] == 1)
+    if(outer_unit_normal[0] > 1 - tol)
     {
       
     }
 
     // bottom boundary
-    if(outer_unit_normal[1] == -1)
+    if(outer_unit_normal[1] < -1 + tol)
     {
       
     }
@@ -437,34 +489,66 @@ namespace Global_Physical_Variables
   {
     // no-slip as default
     Vector<double> u(Dim, 0.0);
-
+    
     // get value of the singular function at this point
     Vector<double> u_sing = singular_fct(x);
     
     // check if this is the inflow boundary - this is the only boundary with
     // inhomogeneous Dirichlet conditions
-    if(boundary_id == Inflow_boundary_id)      
+    if(boundary_id == Inflow_boundary_id)
     {
       // apply parabolic velocity profile to the x-component,
       // i.e. standard flow profile in a pipe
-      u[0] = x[1]*(domain_height - x[1]);
-
-      if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") )
-      {
-	u[0] -= u_sing[0];
-      }
+      u[0] = (3.0/2.0)*(domain_height - x[1]*x[1]);
     }
     else if(boundary_id == Bottom_boundary_id)
     {
-      if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") )
+      // QUEHACERES get from element area
+      double tol = 1e-6;
+
+      // if we're also on the inflow boundary, re-apply the correct value to
+      // prevent the corner node being pinned to 0
+      if(x[0] < -domain_width/2.0 + tol)
       {
-	u[1] = -u_sing[1];
+	u[0] = (3.0/2.0)*(domain_height - x[1]*x[1]);
       }
     }
     
     return u;
   }
 
+  Vector<unsigned> is_velocity_pinned_on_boundary(unsigned boundary_id)
+  {
+    // boolean vector indicating whether each component of u should be pinned
+    Vector<unsigned> pin_u(Dim, 0);
+   
+    switch(boundary_id)
+    {
+      case Inflow_boundary_id:
+	pin_u[0] = true;
+	// QUEHACERES debug
+	pin_u[1] = true;
+	break;
+	
+      case No_slip_boundary_id:
+	pin_u[0] = true;
+	pin_u[1] = true;
+	break;
+
+      case Top_slip_boundary_id:
+	pin_u[1] = true;
+	break;
+	
+      case Outflow_boundary_id:
+	// do nothing, this is a pure traction boundary
+	break;
+
+      case Bottom_boundary_id:
+	pin_u[1] = true;
+	break;
+    }
+    return pin_u;
+  }
 } // end_of_namespace
 
 
@@ -625,6 +709,7 @@ private:
     for(unsigned i_bound = 0; i_bound<num_bound; i_bound++)
     {
       // the only boundary with no traction conditions is the no-slip wall
+      // QUEHACERES also not applying BCs to the 
       if(i_bound == Global_Physical_Variables::No_slip_boundary_id)
       {
 	continue;
@@ -673,7 +758,11 @@ private:
 	  i_bound<=Global_Physical_Variables::Bottom_boundary_id; i_bound++)
       {
 	// Some Dirichlet conditions applied on all boundaries except the outflow
-	if(i_bound == Global_Physical_Variables::Outflow_boundary_id)
+	// QUEHACERES also don't need Lagrange multipliers on the top surfaces since
+	// the singular function satisfies the boundary conditions here
+	if(i_bound == Global_Physical_Variables::Outflow_boundary_id ||
+	   i_bound == Global_Physical_Variables::No_slip_boundary_id ||
+	   i_bound == Global_Physical_Variables::Top_slip_boundary_id )
 	{
 	  continue;
 	}
@@ -900,7 +989,7 @@ StepProblem<ELEMENT>::StepProblem()
     
   // // hierher kill
   // {
-  //  oomph_info << "imposing amplitude; removve thiis!\n";
+  //  oomph_info << "imposing amplitude; remove this!\n";
    
   //  ScalableSingularityForNavierStokesElement<ELEMENT>* el_pt=
   //   dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>
@@ -1007,31 +1096,8 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
   for(unsigned ibound=0; ibound<num_bound; ibound++)
   {
     // boolean vector indicating whether each component of u should be pinned
-    Vector<unsigned> pin_u(Dim, 0);
-   
-    switch(ibound)
-    {
-      case Global_Physical_Variables::Inflow_boundary_id:
-	pin_u[0] = true;
-	break;
-	
-      case Global_Physical_Variables::No_slip_boundary_id:
-	pin_u[0] = true;
-	pin_u[1] = true;
-	break;
-
-      case Global_Physical_Variables::Top_exit_boundary_id:
-	pin_u[1] = true;
-	break;
-	
-      case Global_Physical_Variables::Outflow_boundary_id:
-	// do nothing, this is a pure traction boundary
-	break;
-
-      case Global_Physical_Variables::Bottom_boundary_id:
-	pin_u[1] = true;
-	break;
-    }
+    Vector<unsigned> pin_u;   
+    pin_u = Global_Physical_Variables::is_velocity_pinned_on_boundary(ibound);
      
     unsigned num_nod = Bulk_mesh_pt->nboundary_node(ibound);
     for (unsigned inod=0; inod<num_nod; inod++)
@@ -1131,12 +1197,24 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 	if(node_pt->is_on_boundary(Global_Physical_Variables::Inflow_boundary_id) )
 	{
 	  // no constraint on u_y on the inflow boundary
+	  // QUEHACERES removing pin for debug
+	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	  
+	}
+	// QUEHACERES
+	// shouldn't exist in the BC mesh, but just in case
+	else if(node_pt->is_on_boundary(Global_Physical_Variables::No_slip_boundary_id) )
+	{
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
 	}
-	else if(node_pt->is_on_boundary(Global_Physical_Variables::Top_exit_boundary_id) )
+	// shouldn't exist in the BC mesh, but just in case
+	else if(node_pt->is_on_boundary(Global_Physical_Variables::Top_slip_boundary_id) )
 	{
 	  // no constraint on u_x on the top exit boundary
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
+	  // QUEHACERES no lagrange multipliers should be used here
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
 	}
 	// shouldn't even be in the BC face mesh as there are no Dirichlet conditions here,
 	// but just in case
@@ -1193,7 +1271,7 @@ void StepProblem<ELEMENT>::set_values_to_singular_solution()
     // assign the velocities
     node_pt->set_value(0, u[0]);
     node_pt->set_value(1, u[1]);
-
+    
     // this is a bit naughty, if Lagrange multpliers are used it won't work!
     if(node_pt->nvalue() == 3)
     {
@@ -1228,7 +1306,7 @@ void StepProblem<ELEMENT>::validate_stress()
   ofstream stress_error_output_plain(filename);
   
   // number of plot points per side
-  unsigned nplot = 5;
+  unsigned nplot = 2;
   
   for(unsigned e=0; e<nel; e++)
   {
@@ -1561,31 +1639,32 @@ void StepProblem<ELEMENT>::doc_solution()
     coords_theta_pi_2[i][1] = (double)(i)*Global_Physical_Variables::H_up/(double)(N);
   }
 
-  // create the visualisers for the two angles
-  LineVisualiser line_visualiser_theta_0(   Bulk_mesh_pt, coords_theta_0);
-  LineVisualiser line_visualiser_theta_pi_2(Bulk_mesh_pt, coords_theta_pi_2);
+  // QUEHACERES disable for speed for now
+  // // create the visualisers for the two angles
+  // LineVisualiser line_visualiser_theta_0(   Bulk_mesh_pt, coords_theta_0);
+  // LineVisualiser line_visualiser_theta_pi_2(Bulk_mesh_pt, coords_theta_pi_2);
 
-  // open file
-  sprintf( filename, "%s/soln%i_theta=0.dat", Doc_info.directory().c_str(), Doc_info.number() );
+  // // open file
+  // sprintf( filename, "%s/soln%i_theta=0.dat", Doc_info.directory().c_str(), Doc_info.number() );
 
-  some_file.open(filename);
+  // some_file.open(filename);
 
-  // print out the points
-  line_visualiser_theta_0.output(some_file);
+  // // print out the points
+  // line_visualiser_theta_0.output(some_file);
 
-  // done with this file
-  some_file.close();
+  // // done with this file
+  // some_file.close();
 
-  // open file
-  sprintf( filename, "%s/soln%i_theta=pi_2.dat", Doc_info.directory().c_str(), Doc_info.number() );
+  // // open file
+  // sprintf( filename, "%s/soln%i_theta=pi_2.dat", Doc_info.directory().c_str(), Doc_info.number() );
 
-  some_file.open(filename);
+  // some_file.open(filename);
 
-  // print out the points
-  line_visualiser_theta_pi_2.output(some_file);
+  // // print out the points
+  // line_visualiser_theta_pi_2.output(some_file);
 
-  // done with this file
-  some_file.close();
+  // // done with this file
+  // some_file.close();
   
 } // end_of_doc_solution
 
@@ -1898,13 +1977,16 @@ void validate_dudx_via_finite_diff(DocInfo doc_info)
   const int N = 200;
 
   // step size
-  double hx = 2.0/(double)(N);
-  double hy = 1.0/(double)(N);
+  double hx = Global_Physical_Variables::domain_width/(double)(N);
+  double hy = Global_Physical_Variables::domain_height/(double)(N);
   
   char filename[100];
   ofstream dudx_validation;
   sprintf(filename, "%s/dudx_validation.dat", doc_info.directory().c_str() );
   dudx_validation.open(filename);
+
+  double x_start = -Global_Physical_Variables::domain_width/2.0;
+  double y_start = 0.0;
   
   // loop in x
   for(int i=0; i<N; i++)
@@ -1914,28 +1996,28 @@ void validate_dudx_via_finite_diff(DocInfo doc_info)
     {
       // get grid coordinates
       Vector<double> x(2, 0.0);
-      x[0] =  1.0 + 2.0*(double)(i)/(double)(N);
-      x[1] = -0.5 + (double)(j)/(double)(N);
+      x[0] =  x_start + (double)(i)*hx;
+      x[1] =  y_start + (double)(j)*hy;
 
       dudx_validation << x[0] << " "
 		      << x[1] << " ";
       
       // get x-coordinates of left and right neighbouring points
       Vector<double> x_left(2);
-      x_left[0] = 1.0 + 2.0*(double)(i-1)/(double)(N);
+      x_left[0] = x_start + (double)(i-1)*hx;
       x_left[1] = x[1];
 
       Vector<double> x_right(2);
-      x_right[0] = 1.0 + 2.0*(double)(i+1)/(double)(N);
+      x_right[0] = x_start + (double)(i+1)*hx;
       x_right[1] = x[1];
 
       Vector<double> x_up(2);
       x_up[0] = x[0];
-      x_up[1] = -0.5 + (double)(j+1)/(double)(N);
+      x_up[1] = y_start + (double)(j+1)*hy;
       
       Vector<double> x_down(2);
       x_down[0] = x[0];
-      x_down[1] = -0.5 + (double)(j-1)/(double)(N);
+      x_down[1] = y_start + (double)(j-1)*hy;
       
       // analytic solution and gradient
       Vector<double> u;
@@ -2032,8 +2114,7 @@ int main(int argc, char **argv)
 
   // Check condition number and specify number that identifies which
   // case we're doing: 0: real problem; 1: FE-only; 2: fake r_c equation
-  CommandLineArgs::specify_command_line_flag(
-    "--check_condition_number",
+  CommandLineArgs::specify_command_line_flag("--check_condition_number",
     &Global_Physical_Variables::Problem_type_for_check_condition_number);
 
   // Check the r_c equation
@@ -2101,6 +2182,17 @@ int main(int argc, char **argv)
   // die if no folder to output results (saves doing a tedious calc only to find there's no output!)
   problem.doc_info()->enable_error_if_directory_does_not_exist();
 
+  Vector<double> x(2,0.0);
+  x[1] = 1;
+
+  for(unsigned i=0; i<10; i++)
+  {
+    x[0] = i*3.0/10.0;
+    DenseMatrix<double> dudx = Global_Physical_Variables::gradient_of_singular_fct(x);
+    oomph_info << "at (" << x[0] << ", " << x[1] << "), dux_dy = " << dudx(0,1)
+	       << ", duy_dx = " << dudx(1,0) << "\n";
+  }
+  
   
   if (CommandLineArgs::command_line_flag_has_been_set("--validate_dudx"))
   {
