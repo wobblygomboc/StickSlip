@@ -135,43 +135,23 @@ namespace Global_Physical_Variables
 
   // fake singular amplitude for debug
   double singular_amplitude_for_debug = 1.0;
-  
+
+  const double analytic_singular_amplitude = 0.69099;
+    
   // Dimensionless domain values
   // ---------------------------
 
   double domain_height = 1.0;
   double domain_width  = 6.0;
   
-  // @@@@@@@@ QUEHACERES delete @@@@@@@@@@@@@@@@@@
-  /// Dimless width of inflow channel
-  double H_up = 1.0; 
-
-  /// Dimless length of channel upstream of step
-  double L_up = 2.0; 
-
-  /// \short Dimless length of channel downstream of step
-  double L_down = 2.0; 
-
-  /// Dimless width of outflow channel
-  double H_down = 2.0; 
-
-  /// Radius of internal boundary (surrounding the singularity)
-  double Radius_of_internal_boundary = 0.2; // 0.5;
-
-  // half the convex angle of the step
-  double alpha = 3.0 * MathematicalConstants::Pi / 4.0;
-
-  // @@@@@@ delete ^ @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  
-  
   // IDs for the boundaries
   enum
   {
-    Inflow_boundary_id    = 0,
+    Inflow_boundary_id    = 0,    
     No_slip_boundary_id   = 1,
     Top_slip_boundary_id  = 2,
     Outflow_boundary_id   = 3,
-    Bottom_boundary_id    = 4,    
+    Bottom_boundary_id    = 4
   };
 
   enum
@@ -307,10 +287,7 @@ namespace Global_Physical_Variables
     // make sure we've got enough storage
     u.resize(3);
     
-    // Cartesian components (in polar coords, i.e. ux(r,theta) and uy(r,theta) )
-    // note we're now using the angle where the no-slip surface is theta=pi
-    // QUEHACERES not right, we have u,v in terms of r and theta measured from the apparent origin
-    // where the analytic solution is correct, can't now move that origin. 
+    // convert to Cartesian components u_x and u_y
     u[0] = ur * cos(phi) - v * sin(phi);
     u[1] = ur * sin(phi) + v * cos(phi);
 
@@ -334,11 +311,11 @@ namespace Global_Physical_Variables
     u_polar[0] = ur;
     u_polar[1] = v;
 
-    // do the conversion to Cartesian tensor
+    // do the conversion to Cartesian tensor du_i/dx_j
     du_dx = polar_to_cartesian_derivatives_2d(grad_u_polar, u_polar, r, phi);
 
-    // QUEHACERES account for the flip in the y-axis;
-    // ux, dux_dy and duy_dx need to be flipped, but not dux_dx as the signs cancel.
+    // account for the flip in the y-axis;
+    // u_x, du_x/dy and du_y/dx need to be flipped, but not du_x/dx as the signs cancel.
     u[0] = -u[0];
     
     du_dx(0,1) = -du_dx(0,1);
@@ -350,11 +327,11 @@ namespace Global_Physical_Variables
       // from BCs
       u[0] = 0.0;
       u[1] = 0.0; 
-      u[2] = infinity;
+      u[2] = -infinity;
 
       du_dx(0,0) =  infinity;
-      du_dx(0,1) =  infinity;
-      du_dx(1,0) = -infinity;
+      du_dx(0,1) = -infinity;
+      du_dx(1,0) =  infinity;
       du_dx(1,1) = -infinity;
     }
     
@@ -418,8 +395,7 @@ namespace Global_Physical_Variables
 				   Vector<double>& u,
 				   DenseMatrix<double>& dudx)
   {
-    // QUEHACERES needs updating
-    
+    // QUEHACERES needs updating   
   }
 
 
@@ -436,7 +412,7 @@ namespace Global_Physical_Variables
 			   const Vector<double>& outer_unit_normal,
 			   Vector<double>& traction)
   {
-    double tol = 1e-3;
+    double tol = 1e-6;
     
     // matrix to store the stress BCs we're applying 
     DenseMatrix<double> stress(2, 2, 0.0);
@@ -446,38 +422,18 @@ namespace Global_Physical_Variables
     
     // ======================================
 
-    // inflow boundary
-    if(outer_unit_normal[0] < -1 + tol)
+    // inflow boundary, outer-normal should be (-1,0)
+    // (tolerance allows for floating point rounding)
+    if(outer_unit_normal[0] < -1.0  + tol)
     {
       // gradient of the parabolic inflow velocity profile
       double df_dy = -3.0*x[1];
       
       stress(0,1) = df_dy;
       stress(1,0) = df_dy;
-
-      // pressure
-      stress(0,0) = 0;
     }
 
-    // top boundary
-    if(outer_unit_normal[1] > 1.0 - tol)
-    {
-      // T_{xy} = 0
-      stress(0,1) = 0.0;
-      stress(1,0) = 0.0;
-    }
-
-    // right boundary
-    if(outer_unit_normal[0] > 1 - tol)
-    {
-      
-    }
-
-    // bottom boundary
-    if(outer_unit_normal[1] < -1 + tol)
-    {
-      
-    }
+    // all other boundaries have zero stress conditions, which is default
 
     // set the prescribed traction t_i = T_{ij} n_j
     traction[0] = stress(0,0) * outer_unit_normal[0] + stress(0,1) * outer_unit_normal[1];
@@ -499,7 +455,7 @@ namespace Global_Physical_Variables
     {
       // apply parabolic velocity profile to the x-component,
       // i.e. standard flow profile in a pipe
-      u[0] = (3.0/2.0)*(domain_height - x[1]*x[1]);
+      u[0] = (3.0/2.0)*(domain_height*domain_height - x[1]*x[1]);
     }
     else if(boundary_id == Bottom_boundary_id)
     {
@@ -510,27 +466,37 @@ namespace Global_Physical_Variables
       // prevent the corner node being pinned to 0
       if(x[0] < -domain_width/2.0 + tol)
       {
-	u[0] = (3.0/2.0)*(domain_height - x[1]*x[1]);
+    	u[0] = (3.0/2.0)*(domain_height*domain_height - x[1]*x[1]);
       }
     }
     
     return u;
   }
 
+  // function which returns boolean array denoting whether each velocity component 
+  // should be pinned on the specified boundary
   Vector<unsigned> is_velocity_pinned_on_boundary(unsigned boundary_id)
   {
     // boolean vector indicating whether each component of u should be pinned
     Vector<unsigned> pin_u(Dim, 0);
-   
+
+    // check if we're enforcing Dirichlet conditions with Lagrange multipliers
+    bool pin = ! CommandLineArgs::command_line_flag_has_been_set(
+      "--enforce_dirichlet_bcs_by_lagrange_multipliers");
+    
     switch(boundary_id)
     {
       case Inflow_boundary_id:
-	pin_u[0] = true;
+
+	pin_u[0] = pin;
+	
 	// QUEHACERES debug
-	pin_u[1] = true;
+	pin_u[1] = pin;
 	break;
 	
       case No_slip_boundary_id:
+
+	// this is pinned regardless since Lagrange multipliers not used here
 	pin_u[0] = true;
 	pin_u[1] = true;
 	break;
@@ -544,9 +510,10 @@ namespace Global_Physical_Variables
 	break;
 
       case Bottom_boundary_id:
-	pin_u[1] = true;
+	pin_u[1] = pin;
 	break;
     }
+    
     return pin_u;
   }
 } // end_of_namespace
@@ -564,17 +531,17 @@ namespace Global_Physical_Variables
 /// all boundaries.
 //====================================================================
 template<class ELEMENT>
-class StepProblem : public Problem
+class StickSlipProblem : public Problem
 {
 
 public:
 
 
   /// Constructor
-  StepProblem();
+  StickSlipProblem();
 
   /// Destructor 
-  ~StepProblem()
+  ~StickSlipProblem()
     {
       // hierher: at some point delete things properly and do memory leak
       // check
@@ -733,8 +700,11 @@ private:
 	// Set the pointer to the prescribed traction function
 	traction_element_pt->traction_fct_pt() = 
 	  &Global_Physical_Variables::prescribed_traction;
-         
-	if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+
+	// only tell the traction element about the singular function if it isn't on
+	// the singular traction boundary
+	if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") &&
+	    i_bound != Global_Physical_Variables::Top_slip_boundary_id)
 	{
 	  // We pass the pointer of singular function element to the 
 	  // face element (Set function because it also declares 
@@ -754,8 +724,7 @@ private:
 	("--enforce_dirichlet_bcs_by_lagrange_multipliers"))
     {
       // loop over all the outer boundaries
-      for(unsigned i_bound=0;
-	  i_bound<=Global_Physical_Variables::Bottom_boundary_id; i_bound++)
+      for(unsigned i_bound=0; i_bound < num_bound; i_bound++)
       {
 	// Some Dirichlet conditions applied on all boundaries except the outflow
 	// QUEHACERES also don't need Lagrange multipliers on the top surfaces since
@@ -778,7 +747,15 @@ private:
 	      
 	  //Find the index of the face of element e along boundary b 
 	  int face_index = Bulk_mesh_pt->face_index_at_boundary(i_bound, e);
-            
+
+	  // ID of additional values (lagrange multipliers) added by this face element,
+	  // to allow us to distinguish the two Lagrange multiplier fields which
+	  // vary along the two inflow and bottom boundaries but are discontinuous at
+	  // the corner
+	  unsigned BC_el_id = (i_bound == Global_Physical_Variables::Inflow_boundary_id) ?
+	    Inflow_lagrange_multiplier_boundary_el_id :
+	    Bottom_lagrange_multiplier_boundary_el_id;
+	  
 	  // Build the corresponding bc element
 	  NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
 	    new NavierStokesWithSingularityBCFaceElement<ELEMENT>
@@ -796,7 +773,7 @@ private:
 	  //Add the bc element to the surface mesh
 	  Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
 	}
-      }
+      } // end loop over boundaries
     }
 
     if (CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
@@ -808,8 +785,7 @@ private:
     // the singular function,
    
     // Only outer boundaries
-    for(unsigned i_bound=0;
-	i_bound <= Global_Physical_Variables::Bottom_boundary_id; i_bound++)
+    for(unsigned i_bound=0; i_bound < num_bound; i_bound++)
     {
       unsigned n_element = Bulk_mesh_pt->nboundary_element(i_bound);
       for(unsigned e=0; e<n_element; e++)
@@ -868,8 +844,8 @@ private:
   /// who's added what additional nodal data...)
   enum
   {
-    Flux_jump_el_id,
-    BC_el_id
+    Bottom_lagrange_multiplier_boundary_el_id = 1,
+    Inflow_lagrange_multiplier_boundary_el_id = 2
   };
 
   // document some tingz
@@ -881,10 +857,10 @@ private:
 }; // end_of_problem_class
 
 //==start_of_constructor==================================================
-/// Constructor for StepProblem problem
+/// Constructor for StickSlipProblem problem
 //========================================================================
 template<class ELEMENT>
-StepProblem<ELEMENT>::StepProblem()
+StickSlipProblem<ELEMENT>::StickSlipProblem()
 {  
   // Build the mesh
   Bulk_mesh_pt = Global_Physical_Variables::build_the_mesh<ELEMENT>
@@ -970,7 +946,7 @@ StepProblem<ELEMENT>::StepProblem()
   // Add to mesh
   add_sub_mesh(Face_mesh_for_bc_pt);
   add_sub_mesh(Traction_boundary_condition_mesh_pt);
-
+  
   if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
   {
     // hierher add_sub_mesh(Face_mesh_for_flux_jump_pt);
@@ -1006,6 +982,38 @@ StepProblem<ELEMENT>::StepProblem()
   oomph_info <<"Number of equations: " 
              << this->assign_eqn_numbers() 
              << std::endl;
+
+  // QUEHACERES debug =========================================
+  // unsigned nelement = Face_mesh_for_bc_pt->nelement();
+  // for(unsigned e=0; e<nelement; e++)
+  // {
+  //   NavierStokesWithSingularityBCFaceElement<ELEMENT>* elem_pt =
+  //     dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(Face_mesh_for_bc_pt->element_pt(e));
+  //   unsigned nnode = elem_pt->nnode();
+  //   for(unsigned j=0; j<nnode; j++)
+  //   {
+  //     Node* node_pt = elem_pt->node_pt(j);
+  //     Vector<double> x(2);
+  //     x[0] = node_pt->x(0);
+  //     x[1] = node_pt->x(1);
+
+  //     unsigned nvalue = node_pt->nvalue();
+    
+  //     oomph_info << "node at (" << x[0] << ", " << x[1] << ") has " << nvalue << " values\n";
+  //     oomph_info << "Lambda_index[j] = " << elem_pt->lambda_index()[j] << "\n";
+
+  //     std::map<unsigned, unsigned>* first_index =
+  // 	dynamic_cast<BoundaryNodeBase*>(node_pt)->
+  // 	index_of_first_value_assigned_by_face_element_pt();
+      
+  //     for(std::map<unsigned, unsigned>::iterator it = (*first_index).begin();
+  // 	  it!=(*first_index).end(); it++)
+  //     {
+  // 	oomph_info << "first value for face ID " << it->first << " = " << it->second << "\n";
+  //     }
+  //   }
+  // }
+  // QUEHACERES debug =========================================
   
 } // end_of_constructor
 
@@ -1015,7 +1023,7 @@ StepProblem<ELEMENT>::StepProblem()
 /// all elements
 //========================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::complete_problem_setup()
+void StickSlipProblem<ELEMENT>::complete_problem_setup()
 { 
   if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
   {   
@@ -1079,7 +1087,7 @@ void StepProblem<ELEMENT>::complete_problem_setup()
 /// Helper function to apply boundary conditions
 //========================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::apply_boundary_conditions()
+void StickSlipProblem<ELEMENT>::apply_boundary_conditions()
 {
   // shorthand
   const unsigned Dim = Global_Physical_Variables::Dim;
@@ -1110,8 +1118,7 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 	  Bulk_mesh_pt->boundary_node_pt(ibound, inod)->pin(i);
 	}
       }
-    }
-    
+    }    
   } // end loop over boundaries
   
   // Now set boundary values
@@ -1193,23 +1200,50 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 	// ============================================================================
 	// pin Lagrange multipliers for Dirichlet conditions that we're *not* imposing
 	// ============================================================================
-	
+		
 	if(node_pt->is_on_boundary(Global_Physical_Variables::Inflow_boundary_id) )
 	{
-	  // no constraint on u_y on the inflow boundary
-	  // QUEHACERES removing pin for debug
-	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	  // QUEHACERES we've got a discontinous Lagrange multiplier field now, so
+	  // don't want to catch the corner case... delete the stuff below
 	  
+	  // // catch corner cases where node is on both boundaries
+	  // if(!node_pt->is_on_boundary(Global_Physical_Variables::No_slip_boundary_id) &&
+	  //    !node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id))
+	  // {	    
+	    // QUEHACERES we're doing Dirichlet inflow for debug now
+	    // // no constraint on u_y on the inflow boundary
+	    // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	  // }
+	  
+	  // if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
+	  // {
+	  //   // no constraint on ux, so pin Lagrange multiplier for x-coordinate
+	  //   unsigned lambda_x_nodal_index = map_l[Bottom_lagrange_multiplier_boundary_el_id];
+	  //   el_pt->pin_lagrange_multiplier_at_specified_local_node(j, lambda_x_nodal_index);
+	  // }
+	  // else
+	  // {
+	  //   // unsigned nvalue = node_pt->nvalue();
+	  //   // Vector<unsigned> lambda_index = el_pt->lambda_index();
+	  //   // double debug = 0;
+	  // }
 	}
-	// QUEHACERES
-	// shouldn't exist in the BC mesh, but just in case
-	else if(node_pt->is_on_boundary(Global_Physical_Variables::No_slip_boundary_id) )
+	// should just be the single corner node which is on both the inflow and the
+	// no-slip boundary
+	if(node_pt->is_on_boundary(Global_Physical_Variables::No_slip_boundary_id) )
 	{
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	  // re-pin the FE bit 
+	  node_pt->pin(0);
+	  node_pt->pin(1);
+
+	  // pin the Lagrange multipliers
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0,
+	    Inflow_lagrange_multiplier_boundary_el_id);
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1,
+	    Inflow_lagrange_multiplier_boundary_el_id);
 	}
 	// shouldn't exist in the BC mesh, but just in case
-	else if(node_pt->is_on_boundary(Global_Physical_Variables::Top_slip_boundary_id) )
+	if(node_pt->is_on_boundary(Global_Physical_Variables::Top_slip_boundary_id) )
 	{
 	  // no constraint on u_x on the top exit boundary
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
@@ -1218,18 +1252,19 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 	}
 	// shouldn't even be in the BC face mesh as there are no Dirichlet conditions here,
 	// but just in case
-	else if(node_pt->is_on_boundary(Global_Physical_Variables::Outflow_boundary_id) )
+	if(node_pt->is_on_boundary(Global_Physical_Variables::Outflow_boundary_id) )
 	{
 	  // no constraint on u_x or u_y on the outflow boundary
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
 	}
-	else if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
+	if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
 	{
 	  // no constraint on u_x on the bottom boundary
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0,
+				    Bottom_lagrange_multiplier_boundary_el_id);
 	}
-	
+
 	// assign to the matrix of nodal values
 	for(unsigned i=0; i<Dim; i++)
 	{
@@ -1239,8 +1274,8 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
      
       // Tell the element about these nodal boundary values
       el_pt->set_nodal_boundary_values(nodal_boundary_value);
-    }
-  }
+    } // end loop over BC face elements
+  } // end if(enforced-by-lagrange-mpy)
 
 } // end set bc
 
@@ -1248,7 +1283,7 @@ void StepProblem<ELEMENT>::apply_boundary_conditions()
 /// Function to assign the singular solution to all nodes of the mesh
 //========================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::set_values_to_singular_solution()
+void StickSlipProblem<ELEMENT>::set_values_to_singular_solution()
 {
   // get the number of nodes in the mesh
   unsigned nnode = Bulk_mesh_pt->nnode();
@@ -1286,7 +1321,7 @@ void StepProblem<ELEMENT>::set_values_to_singular_solution()
 // helper functions and comparing the two
 //========================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::validate_stress()
+void StickSlipProblem<ELEMENT>::validate_stress()
 {
   // assign \hat u_i to the nodal values
   set_values_to_singular_solution();
@@ -1424,7 +1459,7 @@ void StepProblem<ELEMENT>::validate_stress()
 /// Doc the solution
 //========================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::doc_solution()
+void StickSlipProblem<ELEMENT>::doc_solution()
 {
 
   ofstream some_file;
@@ -1456,11 +1491,10 @@ void StepProblem<ELEMENT>::doc_solution()
   sprintf(filename,"%s/extended_soln%i.dat",Doc_info.directory().c_str(),
           Doc_info.number());
   some_file.open(filename);
-  
   unsigned nel=Bulk_mesh_pt->nelement();
   for (unsigned e=0; e<nel; e++)
   {
-    npts=10;
+    npts=2;
     ELEMENT* el_pt= dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
     
     el_pt->output_with_various_contributions(some_file, npts);
@@ -1616,28 +1650,28 @@ void StepProblem<ELEMENT>::doc_solution()
   }
   some_file.close();
 
-  // ============================================================
-  // plot solution along theta=0 and theta=pi/2 from the corner
-  // ============================================================
+  // // ============================================================
+  // // plot solution along theta=0 and theta=pi/2 from the corner
+  // // ============================================================
   
-  unsigned N = 1001;
-  Vector<Vector<double> > coords_theta_0(N);
-  Vector<Vector<double> > coords_theta_pi_2(N);
+  // unsigned N = 1001;
+  // Vector<Vector<double> > coords_theta_0(N);
+  // Vector<Vector<double> > coords_theta_pi_2(N);
 
-  // assign coordinates
-  for(unsigned i=0; i<N; i++)
-  {
-    // make space for 2 coordinates
-    coords_theta_0[i].resize(2);
-    coords_theta_pi_2[i].resize(2);
+  // // assign coordinates
+  // for(unsigned i=0; i<N; i++)
+  // {
+  //   // make space for 2 coordinates
+  //   coords_theta_0[i].resize(2);
+  //   coords_theta_pi_2[i].resize(2);
     
-    coords_theta_0[i][0] = Global_Physical_Variables::L_up +
-      (double)(i)*Global_Physical_Variables::L_down/(double)(N);
-    coords_theta_0[i][1] = 0.0;
+  //   coords_theta_0[i][0] = Global_Physical_Variables::L_up +
+  //     (double)(i)*Global_Physical_Variables::L_down/(double)(N);
+  //   coords_theta_0[i][1] = 0.0;
 
-    coords_theta_pi_2[i][0] = Global_Physical_Variables::L_up;
-    coords_theta_pi_2[i][1] = (double)(i)*Global_Physical_Variables::H_up/(double)(N);
-  }
+  //   coords_theta_pi_2[i][0] = Global_Physical_Variables::L_up;
+  //   coords_theta_pi_2[i][1] = (double)(i)*Global_Physical_Variables::H_up/(double)(N);
+  // }
 
   // QUEHACERES disable for speed for now
   // // create the visualisers for the two angles
@@ -1675,7 +1709,7 @@ void StepProblem<ELEMENT>::doc_solution()
 // hierher
 //=======================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::check_condition_number()
+void StickSlipProblem<ELEMENT>::check_condition_number()
 {
  
   // Fake r_c equation?
@@ -1765,7 +1799,7 @@ void StepProblem<ELEMENT>::check_condition_number()
 // hierher
 //=======================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::check_residual_for_exact_non_singular_fe_soln()
+void StickSlipProblem<ELEMENT>::check_residual_for_exact_non_singular_fe_soln()
 { 
   oomph_info << std::endl << std::endl;
 
@@ -1861,7 +1895,7 @@ void StepProblem<ELEMENT>::check_residual_for_exact_non_singular_fe_soln()
 // Impose amplitude of singular fct via fake eqn
 //=======================================================================
 template<class ELEMENT>
-void StepProblem<ELEMENT>::impose_amplitude_runs()
+void StickSlipProblem<ELEMENT>::impose_amplitude_runs()
 {
 
   ofstream some_file;
@@ -1879,11 +1913,11 @@ void StepProblem<ELEMENT>::impose_amplitude_runs()
 
 
   // Loop over imposed amplitudes
-  double a_min=-1.0;
-  unsigned nstep_aux=4;
-  double d_ampl=(1.0-a_min)/double(nstep_aux);
-  unsigned nstep=2*nstep_aux;
-  double imposed_amplitude=a_min;
+  double a_min = -1.0;
+  unsigned nstep_aux = 4;
+  double d_ampl = (1.0-a_min)/double(nstep_aux);
+  unsigned nstep = 2*nstep_aux;
+  double imposed_amplitude = a_min;
   for(unsigned incr = 0; incr < nstep; incr++)
   {
     double integral_of_Z2error = 0.0;
@@ -1916,8 +1950,8 @@ void StepProblem<ELEMENT>::impose_amplitude_runs()
     // Check residual (computed by actual integral!) in singular element  
     el_pt->dont_impose_singular_fct_amplitude();
   
-    unsigned n_dof=el_pt->ndof();
-    Vector<double> residuals(n_dof,0.0);  
+    unsigned n_dof = el_pt->ndof();
+    Vector<double> residuals(n_dof, 0.0);  
     el_pt->fill_in_contribution_to_residuals(residuals);
 
     some_file <<  residuals[0] << endl;
@@ -1940,9 +1974,9 @@ void StepProblem<ELEMENT>::impose_amplitude_runs()
     
     // Plot constant pressure th'out element
     unsigned nplot = 3;
-    for(unsigned i=0; i<n;i++)
+    for(unsigned i=0; i<n; i++)
     {
-      FiniteElement* el_pt=
+      FiniteElement* el_pt =
 	dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(i));
       unsigned num_plot_points=el_pt->nplot_points(nplot);
       Vector<double> s(2);
@@ -2168,7 +2202,7 @@ int main(int argc, char **argv)
   }
   
   // Build the problem with 
-  StepProblem<ProjectableTaylorHoodElement<MyTNavierStokesElement<2,3> > > problem;
+  StickSlipProblem<ProjectableTaylorHoodElement<MyTNavierStokesElement<2,3> > > problem;
 
   // Set up doc info
   // ---------------
@@ -2181,18 +2215,6 @@ int main(int argc, char **argv)
 
   // die if no folder to output results (saves doing a tedious calc only to find there's no output!)
   problem.doc_info()->enable_error_if_directory_does_not_exist();
-
-  Vector<double> x(2,0.0);
-  x[1] = 1;
-
-  for(unsigned i=0; i<10; i++)
-  {
-    x[0] = i*3.0/10.0;
-    DenseMatrix<double> dudx = Global_Physical_Variables::gradient_of_singular_fct(x);
-    oomph_info << "at (" << x[0] << ", " << x[1] << "), dux_dy = " << dudx(0,1)
-	       << ", duy_dx = " << dudx(1,0) << "\n";
-  }
-  
   
   if (CommandLineArgs::command_line_flag_has_been_set("--validate_dudx"))
   {

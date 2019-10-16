@@ -98,8 +98,8 @@ namespace oomph
     ///Compute scaled version of singular function
     Vector<double> singular_fct(const Vector<double>& x) const
     {
-      // get dimension of the problem, plus one because we want pressure as
-      // well as the velocity components
+      // get dimension of the problem; plus one because we want pressure as well
+      // as the velocity components
       const unsigned Dim = x.size() + 1;
 
       // storage for the scaled basis functions
@@ -109,10 +109,12 @@ namespace oomph
       Vector<double> unscaled_u_sing(Dim);
       unscaled_u_sing = unscaled_singular_fct(x);
 
+      double amplitude = amplitude_of_singular_fct();
+      
       // scale 'em
       for(unsigned i=0; i<Dim; i++)
       {
-	scaled_singular_fct[i] = amplitude_of_singular_fct() * unscaled_u_sing[i];
+	scaled_singular_fct[i] = amplitude * unscaled_u_sing[i];
       }
       
       return scaled_singular_fct;
@@ -210,7 +212,7 @@ namespace oomph
       // hierher kill
       /* /// \short Function pointer to the prescribed-flux function fct(x,f(x)) --  */
       /* /// x is a Vector!  */
-      /* typedef void (*NavierStokesPrescribedFluxFctPt) */
+      /* typedef void (*NavierStokesPrescribedTractionFctPt) */
       /*  (const Vector<double>& x, double& flux); */
 
       /// \short Function pointer to the "exact" non-singular function fct(x,u,grad u)
@@ -653,7 +655,8 @@ namespace oomph
     //Set the value of Nintpt
     const unsigned n_intpt = integral_pt()->nweight();
  
-    //Set the Vector to hold local coordinates
+    // Set the Vector to hold local coordinates (in this face element, not the
+    // bulk element this is attached to)
     Vector<double> s(Dim-1);
  
     // Saves result of integration
@@ -691,8 +694,10 @@ namespace oomph
       Vector<double> unit_normal(Dim);
       outer_unit_normal(s, unit_normal);
 
-      // Get global coordinates
+      // local coordinates in bulk element this face element is attached to
       Vector<double> s_bulk(Dim);
+
+      // global coordinates
       Vector<double> x(Dim); 
 
       // get global coordinates
@@ -701,21 +706,21 @@ namespace oomph
 	x[i] = this->interpolated_x(s,i); 
       } 
    
-      // Get gradient of singular velocity functions
+      // Get gradient of unscaled singular velocity functions
       DenseMatrix<double> dudx_sing(Dim, Dim);
       dudx_sing = Navier_stokes_sing_el_pt->gradient_of_unscaled_singular_fct(x);
 
-      // Get the values of the singular functions at our current location
+      // Get the values of the unscaled singular functions at our current location
       Vector<double> u_sing(Dim+1);
       u_sing = Navier_stokes_sing_el_pt->unscaled_singular_fct(x);
 
-      // get singular pressure
-      double p_sing = u_sing[P_index_nst];
+      // get unscaled singular pressure
+      double p_sing = u_sing[Dim]; // P_index_nst];
 
       // shorthand
       ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt());
 
-      // compute the singular contribution to the strain-rate
+      // compute the unscaled singular contribution to the strain-rate
       DenseMatrix<double>strain_rate_sing(Dim, Dim, 0.0);
       
       for (unsigned i=0; i<Dim; i++)
@@ -727,8 +732,8 @@ namespace oomph
       }
 	
       // get contribution of singular pressure and singular velocity gradients to stress tensor
-      DenseMatrix<double> singular_stress(Dim, Dim);
-      singular_stress = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing, p_sing);
+      DenseMatrix<double> stress_sing(Dim, Dim);
+      stress_sing = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing, p_sing);
       
       // Get the local bulk coordinates    
       s_bulk = local_coordinate_in_bulk(s);
@@ -751,24 +756,26 @@ namespace oomph
       {
 	for(unsigned j=0; j<Dim; j++)
 	{
-	  // get derivative u_{i,j}
+	  // get derivative du_i/dx_j
 	  dudx_fe(i,j) = bulk_el_pt->interpolated_dudx_nst(s_bulk, i, j);
 	}
       }
+      
       // get the FE strain rate 1/2(du_i/dx_j + du_j/dx_i)
       DenseMatrix<double> strain_rate_fe(Dim, Dim);
       
       bulk_el_pt->strain_rate(s_bulk, strain_rate_fe);
       
-      // get FE part of the stress
+      // FE part of the stress
       DenseMatrix<double> stress_fe(Dim, Dim);
 
+      // compute it from consitutive equation
       stress_fe = (*bulk_el_pt->stress_fct_pt())(strain_rate_fe, p_fe);
             
       // get FE part of the traction
       Vector<double> traction_fe(Dim);
 
-      // get traction from bulk element
+      // get FE traction from bulk element
       bulk_el_pt->get_traction(s_bulk, unit_normal, traction_fe);
 
       // QUEHACERES why?
@@ -837,10 +844,10 @@ namespace oomph
 	  for(unsigned j=0; j<Dim; j++)
 	  {
 	    exact_integrand += unit_normal[j] * (exact_stress_non_sing(i,j) * u_sing[i]
-						 - singular_stress(i,j) * exact_u_non_sing[i]);
+						 - stress_sing(i,j) * exact_u_non_sing[i]);
 	    
 	    fe_based_integrand += unit_normal[j] * (stress_fe(i,j) * u_sing[i]
-						    - singular_stress(i,j) * u_fe[i]);
+						    - stress_sing(i,j) * u_fe[i]);
 	  }
 	}
 
@@ -859,14 +866,14 @@ namespace oomph
       {
 	for(unsigned j=0; j<Dim; j++)
 	{
-	  integral_result +=
-	    W * unit_normal[j] * (stress_fe(i,j) * u_sing[i]
-	  			  - singular_stress(i,j) * u_fe[i]);
+	  // Lorentz reciprocity theorem
+	  integral_result += W * unit_normal[j] * (stress_fe(i,j) * u_sing[i]
+						   - stress_sing(i,j) * u_fe[i]);
 	  
 	  // QUEHACERES exact version, but there is no exact stress!
 	  /* integral_result += */
 	  /*   W * unit_normal[j] * (exact_stress_non_sing(i,j) * u_sing[i] */
-	  /* 			  - singular_stress(i,j) * exact_u_non_sing[i]); */
+	  /* 			  - stress_sing(i,j) * exact_u_non_sing[i]); */
 	}
       } 
     }
@@ -1424,9 +1431,29 @@ namespace oomph
       }
 
       /// Pin Lagrange multiplier associated with ith coordinate at specified local node
-      void pin_lagrange_multiplier_at_specified_local_node(const unsigned& j, const unsigned& i)
+      void pin_lagrange_multiplier_at_specified_local_node(const unsigned& j,
+							   const unsigned& i,
+							   const int& id = -1)
       {
-	node_pt(j)->pin(Lambda_index[j]+i);
+	// get the face IDs map for this node
+	map<unsigned, unsigned> map_l = *(
+	  dynamic_cast<BoundaryNodeBase*>(node_pt(j))->
+	  index_of_first_value_assigned_by_face_element_pt() );
+
+	unsigned lambda_index;
+
+	// if no id specified, just take the index for the first (and probably only)
+	// boundary in the map
+	if(id == -1)
+	{
+	  lambda_index = map_l.begin()->second;
+	}	
+	else
+	{
+	  // otherwise, get the nodal index for the specified boundary ID
+	  lambda_index = map_l[id];
+	}
+	node_pt(j)->pin(lambda_index+i);
       }
 
       /// Unpin ith component of FE part of the solution at specified local node
@@ -1450,7 +1477,12 @@ namespace oomph
 	FiniteElement::output(file_pt, n_plot);
       }
 
-
+      // QUEHACERES for debug
+      Vector<unsigned> lambda_index()
+      {
+	return Lambda_index;
+      }
+      
     protected:
 
       /// \short Function to compute the shape and test functions and to return 
@@ -1498,8 +1530,7 @@ namespace oomph
 	//Return the value of the jacobian
 	return J_eulerian_at_knot(ipt);
       }
-
-
+      
     private:
 
 
@@ -1553,8 +1584,8 @@ namespace oomph
   //===========================================================================
   template<class ELEMENT>
     NavierStokesWithSingularityBCFaceElement<ELEMENT>::
-    NavierStokesWithSingularityBCFaceElement(FiniteElement* const &bulk_el_pt, 
-				       const int &face_index, 
+    NavierStokesWithSingularityBCFaceElement(FiniteElement* const& bulk_el_pt, 
+				       const int& face_index, 
 				       const unsigned& id) : 
   FaceGeometry<ELEMENT>(), FaceElement()
   { 
@@ -1565,7 +1596,7 @@ namespace oomph
     // Let the bulk element build the FaceElement, i.e. setup the pointers 
     // to its nodes (by referring to the appropriate nodes in the bulk
     // element), etc.
-    bulk_el_pt->build_face_element(face_index,this);
+    bulk_el_pt->build_face_element(face_index, this);
  
 #ifdef PARANOID
     {
@@ -1575,7 +1606,7 @@ namespace oomph
       if(elem_pt->dim() == 3)
       {
 	//Is it refineable
-	RefineableElement* ref_el_pt=dynamic_cast<RefineableElement*>(elem_pt);
+	RefineableElement* ref_el_pt = dynamic_cast<RefineableElement*>(elem_pt);
 	if(ref_el_pt != 0)
 	{
 	  if (this->has_hanging_nodes())
@@ -1709,30 +1740,105 @@ namespace oomph
     // Where is the extra dof representing the Lagrange multiplier stored?
     // Initially store number of values stored right now
     unsigned nnod = nnode();
-    
-    Lambda_index.resize(nnod);
-    for (unsigned j=0; j<nnod; j++)
-    {
-      Lambda_index[j] = node_pt(j)->nvalue();
-    }
+
+    // QUEHACERES delete, not using any more
+    /* Lambda_index.resize(nnod); */
+    /* for (unsigned j=0; j<nnod; j++) */
+    /* { */
+    /*   Lambda_index[j] = node_pt(j)->nvalue(); */
+    /* } */
 
     // Make space for Dim Lagrange multipliers
     Vector<unsigned> n_additional_values(nnod, Dim);
     this->add_additional_values(n_additional_values, id);
 
-    // Now check if we've added new values. If so, they're
-    // the Lagrange multipliers; if not, they was already stored
-    // there so the actual index is Dim less
-    for (unsigned j=0; j<nnod; j++)
+    // QUEHACERES delete, we want the extra values now, and they're distinguished
+    // with boundary IDs.
+    /* // Now check if we've added new values. If so, they're */
+    /* // the Lagrange multipliers; if not, they was already stored */
+    /* // there so the actual index is Dim less */
+    /* for (unsigned j=0; j<nnod; j++) */
+    /* { */
+    /*   if (Lambda_index[j] == node_pt(j)->nvalue()) */
+    /*   { */
+    /* 	Lambda_index[j] -= Dim; */
+    /*   } */
+    /* } */
+
+  } // end NavierStokesWithSingularityBCFaceElement constructor
+
+
+  //===========================================================================
+  /// Extract the keys from a map and return them as a vector
+  //===========================================================================
+  template<typename KEY_T, typename VAL_T>
+    Vector<KEY_T> get_map_keys_as_vector(const map<KEY_T, VAL_T> myMap)
+  {
+    // create our output vector which will hold the keys
+    Vector<KEY_T> keys(myMap.size());
+    
+    // create an iterator to loop over the map
+    typename map<KEY_T, VAL_T>::const_iterator it;
+    
+    // loop over the map and extract the keys
+    unsigned i = 0;
+    for(it = myMap.begin(); it != myMap.end(); it++)
     {
-      if (Lambda_index[j] == node_pt(j)->nvalue())
-      {
-	Lambda_index[j] -= Dim;
-      }
+      keys[i] = it->first;
+      i++;
+    }
+    
+    return keys;
+  }
+  
+  //===========================================================================
+  /// Compute the intersection of the key fields of a vector of maps,
+  /// i.e. which keys do they all have in common?
+  //===========================================================================
+  template <typename KEY_T, typename VAL_T>
+    Vector<KEY_T> map_key_intersection(const Vector<map<KEY_T, VAL_T> >& maps)
+  {    
+    // vector to hold the intersection of the keys
+    Vector<KEY_T> intersection;  
+
+    // get 'em
+    Vector<KEY_T> key0 = get_map_keys_as_vector(maps[0]);
+
+    // if there's only one entry then the intersection is the single key field itself
+    if(maps.size() < 2)
+    {
+      return key0;
     }
 
-  }
+    // if there's more than one, get the next maps keys as a vector
+    Vector<KEY_T> key1 = get_map_keys_as_vector(maps[1]);
 
+    // get the keys which are common between the first two maps
+    std::set_intersection( key0.begin(), key0.end(),
+                           key1.begin(), key1.end(),
+                           back_inserter(intersection));
+
+    // loop over the remaining maps and get the intersection of each with the current
+    // intersection vector
+    for(unsigned i=2; i<maps.size(); i++)
+    {
+      // extract the keys for the current map
+      Vector<KEY_T> keyi = get_map_keys_as_vector(maps[i]);
+        
+      // hold the intermediate intersection between current keys and current intersection
+      Vector<KEY_T> intersection_temp;
+        
+      // get the intersection between these keys and the current intersection
+      std::set_intersection(intersection.begin(), intersection.end(),
+			    keyi.begin(),      keyi.end(), back_inserter(intersection_temp) );
+                              
+      // update the current intersection
+      intersection = intersection_temp;
+    }
+    
+    return intersection;
+  }
+  
   // QUEHACERES compute Lagrange multipliers from BCs; LM contribution to
   // bulk equations and to C equation
   //===========================================================================
@@ -1838,8 +1944,55 @@ namespace oomph
      
       //Set the Vector to hold local coordinates
       Vector<double> s(Dim-1);
-     
-     
+
+      // QUEHACERES delete
+      /* // maximum number of Dim-sized groups of lagrange multipliers stored at */
+      /* // any of the nodes in this face element */
+      /* unsigned max_lagrange_multipliers = 0; */
+
+      /* // loop over the nodes in this face element and figure out the maximum number of */
+      /* // Dim-sized sets of Lagrange multipliers stored */
+      /* for(unsigned l=0; l<n_node; l++) */
+      /* { */
+      /* 	// grab a pointer to the current node */
+      /* 	unsigned nvalue = this->node_pt(l)->nvalue(); */
+
+      /* 	// get the number of lagrange multipliers at this node */
+      /* 	// (note, this is deliberate integer division to account for the fact */
+      /* 	// we don't know if the pressure is also stored at this node or not) */
+      /* 	unsigned nlagrange_multipliers = nvalue / Dim - 1; */
+
+      /* 	// update the max number if this node has more than we've previously found */
+      /* 	if (nlagrange_multipliers > max_lagrange_multipliers) */
+      /* 	{ */
+      /* 	  max_lagrange_multipliers = nlagrange_multipliers; */
+      /* 	} */
+      /* } */
+
+      // build up a vector of maps of each nodes face IDs
+      Vector<std::map<unsigned, unsigned> > maps;
+      for(unsigned l=0; l<n_node; l++)
+      {
+	// grab a pointer to the current node
+	Node* node_pt = this->node_pt(l);
+
+	// get the face IDs map
+	std::map<unsigned, unsigned> map_l = *(
+	  dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	  index_of_first_value_assigned_by_face_element_pt() );
+
+	// add this map to our vector
+	maps.push_back(map_l);
+      }
+
+      // figure out which boundary ID we want for this element by looking at the ID
+      // which is common to all the nodes
+      Vector<unsigned> intersection = map_key_intersection(maps);
+
+      // we'll assume there can only be one ID which is common to all the nodes
+      // (otherwise we'd have two boundaries which overlap)
+      unsigned boundary_id = intersection[0];
+      
       //Loop over the integration points
       //--------------------------------
       for(unsigned ipt=0; ipt<n_intpt; ipt++)
@@ -1868,15 +2021,31 @@ namespace oomph
 	
 	for(unsigned l=0; l<n_node; l++)
         {
+	  // grab a pointer to the current node
+	  Node* node_pt = this->node_pt(l);
+
+	  // get the map which gives the starting nodal index for
+	  // the Lagrange multipliers associated with each boundary ID
+	  std::map<unsigned, unsigned> first_index = *(
+	    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	    index_of_first_value_assigned_by_face_element_pt() );
+
 	  for(unsigned i=0; i<Dim; i++)
           {
-	    u_fe[i] += this->nodal_value(l,i)  * psi[l];
+	    // get the nodal index, accounting for the dimension offset
+	    unsigned lambda_index = first_index[boundary_id] + i;
+	    
+	    // get the nodal values of the FE solution and the boundary conditions
+	    u_fe[i] += this->nodal_value(l,i)    * psi[l];
 	    u_bc[i] += Nodal_boundary_value(l,i) * psi[l];
-	  
-	    lambda[i] += this->nodal_value(l, Lambda_index[l]+i) * psi[l];
-	  	  
+
+	    // get the Lagrange multiplier
+	    lambda[i] += this->nodal_value(l, lambda_index) * psi[l];
+
+	    // get the interpolated position
 	    interpolated_x[i] += this->nodal_position(l,i) * psi[l];	    
           }
+	  
         }
 
 	// Stuff related to singular fct
@@ -1894,10 +2063,24 @@ namespace oomph
 	//Loop over the test functions
 	for(unsigned l=0; l<n_node; l++)
         {
+	  // grab a pointer to the current node
+	  Node* node_pt = this->node_pt(l);
+
+	  // get the map which gives the starting nodal index for
+	  // the Lagrange multipliers associated with each boundary ID
+	  std::map<unsigned, unsigned> first_index = *(
+	    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	    index_of_first_value_assigned_by_face_element_pt() );
+
 	  // loop over the directions
 	  for(unsigned d=0; d<Dim; d++)
 	  {
-	    int local_eqn_lagr = nodal_local_eqn(l, Lambda_index[l] + d);
+	    // get the index
+	    unsigned lambda_index = first_index[boundary_id] + d;
+
+	    // get the local Lagrange multiplier equation number 
+	    int local_eqn_lagr = nodal_local_eqn(l, lambda_index);
+	      
 	    // QUEHACERES get this nodal index systematically, don't assume it starts at 0
 	    int local_eqn_u_fe = nodal_local_eqn(l, d);
 	    int local_eqn_c = -1;
@@ -1954,15 +2137,30 @@ namespace oomph
 	      {
 		for(unsigned l2=0; l2<n_node; l2++)
 		{
-		  int local_unknown_lambda = nodal_local_eqn(l2, Lambda_index[l2] + d);
+		  // grab a pointer to the second node
+		  Node* node2_pt = this->node_pt(l2);
+
+		  // get the map which gives the starting nodal index for
+		  // the Lagrange multipliers associated with each boundary ID
+		  std::map<unsigned, unsigned> first_index2 = *(
+		    dynamic_cast<BoundaryNodeBase*>(node2_pt)->
+		    index_of_first_value_assigned_by_face_element_pt() );
+		  
+		  // get the index of the Lagrange multiplier of the second node
+		  // associated with this face ID and direction 
+		  unsigned lambda_index2 = first_index2[boundary_id] + d;
+		  int local_unknown_lambda = nodal_local_eqn(l2, lambda_index2);
+		      
 		  if (local_unknown_lambda >= 0)
 		  {
 		    jacobian(local_eqn_u_fe, local_unknown_lambda) += psi[l2] * test[l] * W;
 		  }
+		    
 		}
 	      }
 	    }	    
 	  } // end loop over directions
+
         } // end loop over nodes
       } // end loop over integration points
     }
@@ -1974,8 +2172,8 @@ namespace oomph
 
   //======================================================================
   /// \short A class for elements that allow the imposition of an 
-  /// applied flux on the boundaries of Stokes elements.
-  /// The element geometry is obtained from the  FaceGeometry<ELEMENT> 
+  /// applied traction on the boundaries of Navier-Stokes elements.
+  /// The element geometry is obtained from the FaceGeometry<ELEMENT> 
   /// policy class.
   //======================================================================
   template <class ELEMENT>
@@ -1986,8 +2184,8 @@ namespace oomph
     public:
 
       /// \short Function pointer to the prescribed-traction function fct(x,f(x))
-      typedef void (*NavierStokesPrescribedFluxFctPt)
-	(const Vector<double>& x, Vector<double>& traction);
+      typedef void (*NavierStokesPrescribedTractionFctPt)
+	(const Vector<double>& x, const Vector<double>& outer_unit_normal, Vector<double>& traction);
 
       /// \short Constructor, takes the pointer to the "bulk" element and the 
       /// index of the face to which the element is attached.
@@ -2027,7 +2225,7 @@ namespace oomph
       }
 
       /// Access function for the prescribed-flux function pointer
-      NavierStokesPrescribedFluxFctPt& traction_fct_pt()
+      NavierStokesPrescribedTractionFctPt& traction_fct_pt()
       {
 	return Traction_fct_pt;
       }
@@ -2209,7 +2407,9 @@ namespace oomph
 
       /// Function to calculate the prescribed traction at a given spatial
       /// position
-      void get_traction(const Vector<double>& x, Vector<double>& traction)
+      void get_traction(const Vector<double>& x,
+			const Vector<double>& outer_unit_normal,
+			Vector<double>& traction)
       {
 	//If the function pointer is zero return zero
 	if(Traction_fct_pt == 0)
@@ -2219,7 +2419,7 @@ namespace oomph
 	//Otherwise call the function
 	else
 	{
-	  (*Traction_fct_pt)(x, traction);
+	  (*Traction_fct_pt)(x, outer_unit_normal, traction);
 	}
       }
  
@@ -2245,7 +2445,7 @@ namespace oomph
  
  
       /// Function pointer to the (global) prescribed-flux function
-      NavierStokesPrescribedFluxFctPt Traction_fct_pt;
+      NavierStokesPrescribedTractionFctPt Traction_fct_pt;
 
       ///The spatial dimension of the problem
       unsigned Dim;
@@ -2557,14 +2757,14 @@ namespace oomph
       }
 
       //Get the imposed traction
-      Vector<double> traction(Dim, 0.0);
-      get_traction(interpolated_x, traction);
+      Vector<double> traction_imposed(Dim, 0.0);
+      get_traction(interpolated_x, unit_normal, traction_imposed);
 
       Vector<double> traction_fe(Dim, 0.0);
       for(unsigned i=0; i<Dim; i++)
       {
 	// Subtract off the traction from the singular fct
-	traction_fe[i] = traction[i] - traction_sing[i];
+	traction_fe[i] = traction_imposed[i] - traction_sing[i];
       }
       //Now add to the appropriate equations
    
@@ -2579,10 +2779,8 @@ namespace oomph
 	  /*IF it's not a boundary condition*/
 	  if(local_eqn >= 0)
 	  {
-	    // QUEHACERES negative because the traction *onto* the fluid acts
-	    // antiparallel to the outer normal?
 	    //Add the prescribed traction terms	  
-	    residuals[local_eqn] -= traction_fe[i] * testf[l]*W;
+	    residuals[local_eqn] += traction_fe[i] * testf[l]*W;
 	  
 	    // Imposed traction doesn't depend upon the solution, 
 	    // --> the Jacobian is always zero, so no Jacobian
