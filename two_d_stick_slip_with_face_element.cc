@@ -671,13 +671,15 @@ private:
   /// Create face elements
   void create_face_elements()
   { 
-    // Traction boundaries, which is all except the no-slip wall
+    // Traction boundaries, which is all except the no-slip wall, and for now,
+    // the inflow boundary too
     unsigned num_bound = Bulk_mesh_pt->nboundary();
     for(unsigned i_bound = 0; i_bound<num_bound; i_bound++)
     {
       // the only boundary with no traction conditions is the no-slip wall
       // QUEHACERES also not applying BCs to the 
-      if(i_bound == Global_Physical_Variables::No_slip_boundary_id)
+      if(i_bound == Global_Physical_Variables::No_slip_boundary_id ||
+	 i_bound == Global_Physical_Variables::Inflow_boundary_id)
       {
 	continue;
       }
@@ -719,7 +721,7 @@ private:
       }
     }
         
-    // Dirichlet boundary conditions
+    // add Lagrange multipliers to enforce Dirichlet boundary conditions
     if (CommandLineArgs::command_line_flag_has_been_set
 	("--enforce_dirichlet_bcs_by_lagrange_multipliers"))
     {
@@ -748,10 +750,10 @@ private:
 	  //Find the index of the face of element e along boundary b 
 	  int face_index = Bulk_mesh_pt->face_index_at_boundary(i_bound, e);
 
-	  // ID of additional values (lagrange multipliers) added by this face element,
+	  // ID of additional values (Lagrange multipliers) added by this face element,
 	  // to allow us to distinguish the two Lagrange multiplier fields which
-	  // vary along the two inflow and bottom boundaries but are discontinuous at
-	  // the corner
+	  // vary along the inflow and bottom boundaries but are discontinuous at
+	  // the corner where they meet
 	  unsigned BC_el_id = (i_bound == Global_Physical_Variables::Inflow_boundary_id) ?
 	    Inflow_lagrange_multiplier_boundary_el_id :
 	    Bottom_lagrange_multiplier_boundary_el_id;
@@ -769,7 +771,14 @@ private:
 	      dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>(
 		Singular_fct_element_mesh_pt->element_pt(0)));
 	  }
-            
+
+	  // tell the BC face element to use a finite-diff jacobian (for debug)
+	  if (CommandLineArgs::command_line_flag_has_been_set(
+		"--use_fd_jacobian_for_bc_elements") )
+	    {
+	      bc_element_pt->use_fd_jacobian();
+	    }
+	  
 	  //Add the bc element to the surface mesh
 	  Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
 	}
@@ -784,7 +793,7 @@ private:
     // Create the face elements needed to compute the amplitude of
     // the singular function,
    
-    // Only outer boundaries
+    // All outer boundaries
     for(unsigned i_bound=0; i_bound < num_bound; i_bound++)
     {
       unsigned n_element = Bulk_mesh_pt->nboundary_element(i_bound);
@@ -962,58 +971,11 @@ StickSlipProblem<ELEMENT>::StickSlipProblem()
   
   // Complete problem setup
   complete_problem_setup();
-    
-  // // hierher kill
-  // {
-  //  oomph_info << "imposing amplitude; remove this!\n";
-   
-  //  ScalableSingularityForNavierStokesElement<ELEMENT>* el_pt=
-  //   dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>
-  //   (Singular_fct_element_mesh_pt->element_pt(0));
-   
-   
-  //  // Change r_C so that C is assigned directly
-  //  double imposed_amplitude=1.0;
-  //  el_pt->impose_singular_fct_amplitude(imposed_amplitude);
-  // }
-
-
+  
   // Setup equation numbering scheme
   oomph_info <<"Number of equations: " 
              << this->assign_eqn_numbers() 
              << std::endl;
-
-  // QUEHACERES debug =========================================
-  // unsigned nelement = Face_mesh_for_bc_pt->nelement();
-  // for(unsigned e=0; e<nelement; e++)
-  // {
-  //   NavierStokesWithSingularityBCFaceElement<ELEMENT>* elem_pt =
-  //     dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(Face_mesh_for_bc_pt->element_pt(e));
-  //   unsigned nnode = elem_pt->nnode();
-  //   for(unsigned j=0; j<nnode; j++)
-  //   {
-  //     Node* node_pt = elem_pt->node_pt(j);
-  //     Vector<double> x(2);
-  //     x[0] = node_pt->x(0);
-  //     x[1] = node_pt->x(1);
-
-  //     unsigned nvalue = node_pt->nvalue();
-    
-  //     oomph_info << "node at (" << x[0] << ", " << x[1] << ") has " << nvalue << " values\n";
-  //     oomph_info << "Lambda_index[j] = " << elem_pt->lambda_index()[j] << "\n";
-
-  //     std::map<unsigned, unsigned>* first_index =
-  // 	dynamic_cast<BoundaryNodeBase*>(node_pt)->
-  // 	index_of_first_value_assigned_by_face_element_pt();
-      
-  //     for(std::map<unsigned, unsigned>::iterator it = (*first_index).begin();
-  // 	  it!=(*first_index).end(); it++)
-  //     {
-  // 	oomph_info << "first value for face ID " << it->first << " = " << it->second << "\n";
-  //     }
-  //   }
-  // }
-  // QUEHACERES debug =========================================
   
 } // end_of_constructor
 
@@ -1046,22 +1008,6 @@ void StickSlipProblem<ELEMENT>::complete_problem_setup()
       bulk_el_pt->exact_non_singular_fct_pt() =
 	&Global_Physical_Variables::u_and_gradient_non_singular;
     }
-   
-    // hierher move this to create_face_elements as for the others
-    // Flux jump elements
-    // unsigned n_element = Face_mesh_for_flux_jump_pt->nelement();
-    // for(unsigned e=0;e<n_element;e++)
-    //  {
-    //   // Upcast from GeneralisedElement to the present element
-    //   PoissonWithSingularityFluxJumpFaceElement<ELEMENT>* el_pt = dynamic_cast<
-    //    PoissonWithSingularityFluxJumpFaceElement<ELEMENT>*>(
-    //     Face_mesh_for_flux_jump_pt->element_pt(e));
-     
-    //   // Tell the element about the singular fct
-    //   el_pt->set_poisson_sing_el_pt(
-    //    dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>(
-    //     Singular_fct_element_mesh_pt->element_pt(0)));
-    //  }
 
     //BC elements
     unsigned n_element = Face_mesh_for_bc_pt->nelement();
@@ -1202,31 +1148,18 @@ void StickSlipProblem<ELEMENT>::apply_boundary_conditions()
 	// ============================================================================
 		
 	if(node_pt->is_on_boundary(Global_Physical_Variables::Inflow_boundary_id) )
-	{
-	  // QUEHACERES we've got a discontinous Lagrange multiplier field now, so
-	  // don't want to catch the corner case... delete the stuff below
-	  
-	  // // catch corner cases where node is on both boundaries
-	  // if(!node_pt->is_on_boundary(Global_Physical_Variables::No_slip_boundary_id) &&
-	  //    !node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id))
-	  // {	    
-	    // QUEHACERES we're doing Dirichlet inflow for debug now
-	    // // no constraint on u_y on the inflow boundary
-	    // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
-	  // }
-	  
-	  // if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
-	  // {
-	  //   // no constraint on ux, so pin Lagrange multiplier for x-coordinate
-	  //   unsigned lambda_x_nodal_index = map_l[Bottom_lagrange_multiplier_boundary_el_id];
-	  //   el_pt->pin_lagrange_multiplier_at_specified_local_node(j, lambda_x_nodal_index);
-	  // }
-	  // else
-	  // {
-	  //   // unsigned nvalue = node_pt->nvalue();
-	  //   // Vector<unsigned> lambda_index = el_pt->lambda_index();
-	  //   // double debug = 0;
-	  // }
+	{	  
+	  // QUEHACERES we're doing Dirichlet inflow for debug now
+	  // // no constraint on u_y on the inflow boundary
+	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	  if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
+	  {
+	    // pin lambda_y[inflow] on the corner, since lambda_y[bottom] is also active
+	    // here, and we can't have two active Lagrange multipliers trying to
+	    // enforce the same thing
+	    el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1,
+					Inflow_lagrange_multiplier_boundary_el_id);
+	  }
 	}
 	// should just be the single corner node which is on both the inflow and the
 	// no-slip boundary
@@ -1245,18 +1178,19 @@ void StickSlipProblem<ELEMENT>::apply_boundary_conditions()
 	// shouldn't exist in the BC mesh, but just in case
 	if(node_pt->is_on_boundary(Global_Physical_Variables::Top_slip_boundary_id) )
 	{
+	  // re-pin the FE bit of uy
+	  node_pt->pin(1);
+	  
 	  // no constraint on u_x on the top exit boundary
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
 	  // QUEHACERES no lagrange multipliers should be used here
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
 	}
-	// shouldn't even be in the BC face mesh as there are no Dirichlet conditions here,
-	// but just in case
+	// should just be the corner node which is also on the bottom boundary
 	if(node_pt->is_on_boundary(Global_Physical_Variables::Outflow_boundary_id) )
 	{
 	  // no constraint on u_x or u_y on the outflow boundary
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 1);
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, 0);	 
 	}
 	if(node_pt->is_on_boundary(Global_Physical_Variables::Bottom_boundary_id) )
 	{
@@ -2130,6 +2064,9 @@ int main(int argc, char **argv)
   // finite-diff validation of dudx maths
   CommandLineArgs::specify_command_line_flag("--validate_dudx");
 
+  // finite-diff the jacobian for the BC face elements for debug
+  CommandLineArgs::specify_command_line_flag("--use_fd_jacobian_for_bc_elements");
+  
   // validation of singular stress
   CommandLineArgs::specify_command_line_flag("--validate_singular_stress");
   
@@ -2215,6 +2152,9 @@ int main(int argc, char **argv)
 
   // die if no folder to output results (saves doing a tedious calc only to find there's no output!)
   problem.doc_info()->enable_error_if_directory_does_not_exist();
+
+  // bump up the max residuals
+  problem.max_residuals() = 1e3;
   
   if (CommandLineArgs::command_line_flag_has_been_set("--validate_dudx"))
   {
@@ -2243,8 +2183,9 @@ int main(int argc, char **argv)
 
     // Check condition number
     problem.check_condition_number();
-    
+   
     // Solve the bloody thing
+    problem.doc_solution();
     problem.newton_solve();
     problem.doc_solution();
     exit(0);

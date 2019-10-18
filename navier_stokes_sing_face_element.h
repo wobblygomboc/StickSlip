@@ -271,14 +271,14 @@ namespace oomph
 	fill_in_generic_residual_contribution_navier_stokes_traction(
 	  residuals,GeneralisedElement::Dummy_matrix,0);
       }
-
-      /// \short Add the element's contribution to its residual vector and its 
+      
+      /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
       inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
-						   DenseMatrix<double> &jacobian)
+      						   DenseMatrix<double> &jacobian)
       {
-	//Call the generic routine with the flag set to 1
-	fill_in_generic_residual_contribution_navier_stokes_traction(residuals,jacobian,1);
+      	//Call the generic routine with the flag set to 1
+      	fill_in_generic_residual_contribution_navier_stokes_traction(residuals,jacobian,1);
       }
 
       /// Output function -- forward to broken version in FiniteElement
@@ -1364,15 +1364,14 @@ namespace oomph
 	fill_in_generic_residual_contribution_navier_stokes_sing(
 	  residuals, GeneralisedElement::Dummy_matrix, 0);
       }
-
-
+      
       /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
       inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
-						   DenseMatrix<double> &jacobian)
-      {
+      						   DenseMatrix<double> &jacobian)
+      {      	
 	//Call the generic routine with the flag set to 1
-	fill_in_generic_residual_contribution_navier_stokes_sing(residuals, jacobian, 1);
+	fill_in_generic_residual_contribution_navier_stokes_sing(residuals, jacobian, 1);      	
       }
 
       /// Output function
@@ -1477,6 +1476,12 @@ namespace oomph
 	FiniteElement::output(file_pt, n_plot);
       }
 
+      // finite-diff the jacobian (for debug)
+      void use_fd_jacobian()
+      {
+	Use_fd_jacobian = true;
+      }
+      
       // QUEHACERES for debug
       Vector<unsigned> lambda_index()
       {
@@ -1567,6 +1572,7 @@ namespace oomph
       /// (and its gradients etc.) as well as amplitude
       ScalableSingularityForNavierStokesElement<ELEMENT>* Navier_stokes_sing_el_pt;
 
+      bool Use_fd_jacobian;
     }; 
 
   //////////////////////////////////////////////////////////////////////
@@ -1593,6 +1599,9 @@ namespace oomph
     // Initialise
     Navier_stokes_sing_el_pt = 0;
 
+    // default to using the full analytic jacobian.
+    Use_fd_jacobian = false;
+    
     // Let the bulk element build the FaceElement, i.e. setup the pointers 
     // to its nodes (by referring to the appropriate nodes in the bulk
     // element), etc.
@@ -1932,8 +1941,7 @@ namespace oomph
 /*       } */
 /*     } */
 /*     else */
-    {
-      //Find out how many nodes there are
+    {      //Find out how many nodes there are
       const unsigned n_node = nnode();
      
       //Set up memory for the shape and test functions
@@ -2066,6 +2074,11 @@ namespace oomph
 	  // grab a pointer to the current node
 	  Node* node_pt = this->node_pt(l);
 
+	  // QUEHACERES debug
+	  Vector<double> x(2);
+	  x[0] = node_pt->x(0);
+	  x[1] = node_pt->x(1);
+	  
 	  // get the map which gives the starting nodal index for
 	  // the Lagrange multipliers associated with each boundary ID
 	  std::map<unsigned, unsigned> first_index = *(
@@ -2100,13 +2113,24 @@ namespace oomph
 		OOMPH_CURRENT_FUNCTION,
 		OOMPH_EXCEPTION_LOCATION);
 	    }
-#endif
+#endif	    
 	    // Lagrange multiplier for BC residual: It's determined by enforcing
 	    // that u_fe + C u_sing = u_bc
 	    if(local_eqn_lagr >= 0)
 	    {
 	      residuals[local_eqn_lagr] += ((u_fe[d] + u_sing[d]) - u_bc[d]) * test[l]*W;
-           
+
+	      // QUEHACERES test this
+	      // Add the contribution of the Lagrange multipliers to
+	      // the singular amplitude equation
+	      if(local_eqn_c >= 0) 
+	      {
+		// QUEHACERES delete, appear sto work without, although not sure how!
+		/* // QUEHACERES needs to be re-enabled when not imposing the amplitude */
+		/* // - it cocks up presumably because of the bypass bit is called before this */
+		/* /\* residuals[local_eqn_c] += lambda[d] * test[l] * W; *\/ */
+	      }
+		
 	      // Jacobian?
 	      if (flag == 1)
 	      {
@@ -2716,7 +2740,7 @@ namespace oomph
       if (Navier_stokes_sing_el_pt != 0)
       {
 	dudx_sing = Navier_stokes_sing_el_pt->gradient_of_singular_fct(interpolated_x);
-	u_sing = Navier_stokes_sing_el_pt->singular_fct(interpolated_x);
+	u_sing    = Navier_stokes_sing_el_pt->singular_fct(interpolated_x);
 
 	// compute the singular contribution to the strain-rate
 	for (unsigned i=0; i<Dim; i++)
@@ -2728,8 +2752,8 @@ namespace oomph
 	}
       }
 
-      // get singular pressure
-      double p_sing = u_sing[P_index_nst];
+      // get singular pressure (singular function returns [u,v,p] )
+      double p_sing = u_sing[Dim];
 	
       // Compute outer unit normal at the specified local coordinate
       Vector<double> unit_normal(Dim);
@@ -2766,7 +2790,7 @@ namespace oomph
 	// Subtract off the traction from the singular fct
 	traction_fe[i] = traction_imposed[i] - traction_sing[i];
       }
-      //Now add to the appropriate equations
+      //Now add to the appropriate (bulk) equations
    
       //Loop over the test functions
       for(unsigned l=0; l<n_node; l++)
