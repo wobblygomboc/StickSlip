@@ -15,7 +15,7 @@ RefineableTriangleMesh<ELEMENT>* build_the_mesh(const double&
   
   // The boundary is bounded by six distinct boundaries, each
   // represented by its own polyline
-  Vector<TriangleMeshCurveSection*> boundary_polyline_pt(7);
+  Vector<TriangleMeshCurveSection*> boundary_polyline_pt(5);
   TriangleMeshClosedCurve* closed_curve_pt = 0;
  
   // Boundary 0: Inflow boundary
@@ -60,7 +60,7 @@ RefineableTriangleMesh<ELEMENT>* build_the_mesh(const double&
   bound_2[1][0] = right_edge_x;
   bound_2[1][1] = domain_height;
  
-  boundary_id = Top_exit_boundary_id;
+  boundary_id = Top_slip_boundary_id;
   boundary_polyline_pt[2] = new TriangleMeshPolyLine(bound_2, boundary_id);
  
 
